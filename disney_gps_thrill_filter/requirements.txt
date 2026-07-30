@@ -1,0 +1,6 @@
+streamlit>=1.45,<1.46
+pandas>=2.0,<3
+requests>=2.31,<3
+streamlit-gps-location==1.2.2
+folium>=0.17,<0.20
+streamlit-folium==0.23.2
