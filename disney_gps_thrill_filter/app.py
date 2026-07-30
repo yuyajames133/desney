@@ -549,6 +549,15 @@ st.caption(
     "実用上の目安です。感じ方には個人差があります。"
 )
 
+map_interactive = st.checkbox(
+    "地図を操作する",
+    value=False,
+    help=(
+        "オフのときは地図上を指でなぞっても、"
+        "ページを上下にスクロールできます。"
+    ),
+)
+
 
 location_raw = gps_location_button(
     buttonText="現在地を取得"
@@ -743,6 +752,14 @@ def make_map(map_df):
         ],
         zoom_start=16,
         control_scale=True,
+
+        # スマホでは通常時に地図が指の動きを奪わないようにする
+        dragging=map_interactive,
+        touch_zoom=map_interactive,
+        double_click_zoom=map_interactive,
+        box_zoom=map_interactive,
+        keyboard=map_interactive,
+        scroll_wheel_zoom=False,
     )
 
     # OSMに登録されたパーク輪郭をそのまま描画
@@ -976,8 +993,8 @@ with all_tab:
 
     folium_static(
         make_map(df),
-        width=900,
-        height=600,
+        width=700,
+        height=330,
     )
 
 
