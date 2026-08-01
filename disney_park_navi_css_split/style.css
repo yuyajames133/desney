@@ -393,8 +393,9 @@ div[data-testid="stVerticalBlockBorderWrapper"] .badge-wait {
 
 .facility-title,
 .facility-title * {
-    color: #06284d !important;
-    -webkit-text-fill-color: #06284d !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+    text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
     font-size: 1.13rem !important;
     line-height: 1.35 !important;
     font-weight: 950 !important;
