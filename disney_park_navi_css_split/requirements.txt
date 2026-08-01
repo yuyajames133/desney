@@ -1,0 +1,7 @@
+streamlit
+pandas
+requests
+folium
+streamlit-folium
+streamlit-gps-location
+beautifulsoup4
