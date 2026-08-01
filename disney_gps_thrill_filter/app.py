@@ -1,5 +1,7 @@
+import json
 import math
 import time
+import urllib.parse
 from pathlib import Path
 
 import folium
@@ -11,96 +13,124 @@ from streamlit_gps_location import gps_location_button
 
 
 st.set_page_config(
-    page_title="ディズニー 距離・待ち時間検索",
+    page_title="ディズニー パークナビ",
     page_icon="🏰",
+    layout="centered",
 )
 
-st.title("🏰 ディズニー 距離・待ち時間検索")
+st.title("🏰 ディズニー パークナビ")
+st.caption(
+    "距離・待ち時間・レストラン・ショップ・涼しい場所・徒歩ルート"
+)
+
+
+# ------------------------------------------------------------------
+# 基本設定
+# ------------------------------------------------------------------
 
 PARKS = {
-    "東京ディズニーランド":
-        "3cc919f1-d16d-43e0-8c3f-1dd269bd1a42",
-    "東京ディズニーシー":
-        "67b290d5-3478-4f23-b601-2f8fb71ba803",
+    "東京ディズニーランド": {
+        "id": "3cc919f1-d16d-43e0-8c3f-1dd269bd1a42",
+        "center": [35.632416, 139.880666],
+        "bbox": (35.6265, 139.8735, 35.6390, 139.8885),
+        "official": {
+            "アトラクション":
+                "https://www.tokyodisneyresort.jp/tdl/attraction.html",
+            "レストラン":
+                "https://www.tokyodisneyresort.jp/tdl/restaurant.html",
+            "ショップ":
+                "https://www.tokyodisneyresort.jp/tdl/shop.html",
+            "ランドマーク":
+                "https://www.tokyodisneyresort.jp/tdl/",
+        },
+    },
+    "東京ディズニーシー": {
+        "id": "67b290d5-3478-4f23-b601-2f8fb71ba803",
+        "center": [35.626015, 139.885409],
+        "bbox": (35.6185, 139.8765, 35.6330, 139.8970),
+        "official": {
+            "アトラクション":
+                "https://www.tokyodisneyresort.jp/tds/attraction.html",
+            "レストラン":
+                "https://www.tokyodisneyresort.jp/tds/restaurant.html",
+            "ショップ":
+                "https://www.tokyodisneyresort.jp/tds/shop.html",
+            "ランドマーク":
+                "https://www.tokyodisneyresort.jp/tds/",
+        },
+    },
 }
 
-API = "https://api.themeparks.wiki/v1/entity"
-NOMINATIM_API = "https://nominatim.openstreetmap.org/search"
+THEMEPARKS_API = "https://api.themeparks.wiki/v1/entity"
+OVERPASS_API = "https://overpass-api.de/api/interpreter"
+VALHALLA_API = "https://valhalla1.openstreetmap.de/route"
 
-NAME_FILE = Path(__file__).with_name("attraction_names.csv")
-FAVORITES_FILE = Path(__file__).with_name("favorites.csv")
+BASE_DIR = Path(__file__).resolve().parent
+NAME_FILE = BASE_DIR / "attraction_names.csv"
+FAVORITES_FILE = BASE_DIR / "favorites.csv"
+ICON_FILE = BASE_DIR / "icon_catalog.csv"
 
-ICON_FILE = Path(__file__).with_name("icon_catalog.csv")
+TYPE_ICONS = {
+    "アトラクション": "🎡",
+    "レストラン": "🍽️",
+    "ショップ": "🛍️",
+    "ランドマーク": "📍",
+}
 
+THRILL_ORDER = {
+    "穏やか": 0,
+    "軽いスリル": 1,
+    "絶叫強め": 2,
+}
 
-@st.cache_data
-def get_icon_catalog():
-    """カテゴリ分けされたアイコン一覧をCSVから読む。"""
-    return pd.read_csv(
-        ICON_FILE,
-        dtype=str,
-    ).drop_duplicates("icon")
-
-
-ICON_CATALOG = get_icon_catalog()
-ICON_OPTIONS = ICON_CATALOG["icon"].tolist()
-
-ICON_NAMES = dict(
-    zip(
-        ICON_CATALOG["icon"],
-        ICON_CATALOG["name"],
-    )
-)
-
-ICON_CATEGORIES = dict(
-    zip(
-        ICON_CATALOG["icon"],
-        ICON_CATALOG["category"],
-    )
-)
-
-CATEGORY_OPTIONS = (
-    ICON_CATALOG["category"]
-    .drop_duplicates()
-    .tolist()
-)
-
-ICONS_BY_CATEGORY = {
-    category: (
-        ICON_CATALOG.loc[
-            ICON_CATALOG["category"] == category,
-            "icon",
-        ].tolist()
-    )
-    for category in CATEGORY_OPTIONS
+STATUS_JA = {
+    "OPERATING": "営業中",
+    "DOWN": "一時休止",
+    "CLOSED": "受付終了",
+    "REFURBISHMENT": "休止中",
+    "UNKNOWN": "情報なし",
 }
 
 
+# ------------------------------------------------------------------
+# CSV・お気に入り
+# ------------------------------------------------------------------
+
 @st.cache_data
-def get_japanese_names():
-    """施設ID・日本語名・専用アイコンをCSVから読む。"""
+def load_attraction_master():
+    """日本語名・待機環境・絶叫度などの補助情報を読む。"""
+    if not NAME_FILE.exists():
+        return pd.DataFrame()
+
     return pd.read_csv(
         NAME_FILE,
-        usecols=[
-            "entity_id",
-            "name_ja",
-            "icon",
-            "queue_type",
-            "queue_icon",
-            "weather_note",
-            "thrill_level",
-            "thrill_icon",
-            "thrill_note",
-        ],
+        dtype={"entity_id": "string"},
+    )
+
+
+@st.cache_data
+def load_icon_catalog():
+    """お気に入りアイコン一覧を読む。"""
+    if not ICON_FILE.exists():
+        return pd.DataFrame(
+            [
+                {"category": "基本", "icon": "⭐", "name": "星"},
+                {"category": "基本", "icon": "❤️", "name": "ハート"},
+                {"category": "場所", "icon": "📍", "name": "場所"},
+            ]
+        )
+
+    return (
+        pd.read_csv(ICON_FILE, dtype=str)
+        .dropna(subset=["icon"])
+        .drop_duplicates("icon")
     )
 
 
 def load_favorites():
     """
-    お気に入りをCSVから読み込む。
-
-    戻り値：
-    {施設ID: 選択中のアイコン}
+    お気に入りを読む。
+    戻り値は {施設ID: アイコン}。
     """
     if not FAVORITES_FILE.exists():
         return {}
@@ -108,10 +138,7 @@ def load_favorites():
     try:
         favorite_df = pd.read_csv(
             FAVORITES_FILE,
-            dtype={
-                "entity_id": "string",
-                "icon": "string",
-            },
+            dtype={"entity_id": "string", "icon": "string"},
         )
     except (OSError, pd.errors.EmptyDataError):
         return {}
@@ -119,31 +146,24 @@ def load_favorites():
     if "entity_id" not in favorite_df.columns:
         return {}
 
-    # 旧版CSVにicon列がなくても引き継げる
     if "icon" not in favorite_df.columns:
         favorite_df["icon"] = "⭐"
 
-    favorites = {}
-
-    for _, row in favorite_df.iterrows():
-        entity_id = str(row["entity_id"])
-        icon = str(row["icon"]) if pd.notna(row["icon"]) else "⭐"
-
-        if icon not in ICON_OPTIONS:
-            icon = "⭐"
-
-        favorites[entity_id] = icon
-
-    return favorites
+    return {
+        str(row["entity_id"]): (
+            str(row["icon"])
+            if pd.notna(row["icon"])
+            else "⭐"
+        )
+        for _, row in favorite_df.iterrows()
+        if pd.notna(row["entity_id"])
+    }
 
 
 def save_favorites(favorites):
-    """施設IDと選択アイコンをCSVへ保存する。"""
+    """お気に入りをCSVへ保存する。"""
     rows = [
-        {
-            "entity_id": entity_id,
-            "icon": icon,
-        }
+        {"entity_id": entity_id, "icon": icon}
         for entity_id, icon in sorted(favorites.items())
     ]
 
@@ -157,47 +177,43 @@ def save_favorites(favorites):
     )
 
 
-def toggle_favorite(entity_id, default_icon, favorites):
-    """☆で追加、★で解除する。"""
+def toggle_favorite(entity_id, default_icon):
+    """お気に入りを追加・解除する。"""
+    favorites = load_favorites()
     entity_id = str(entity_id)
-    updated = dict(favorites)
 
-    if entity_id in updated:
-        del updated[entity_id]
+    if entity_id in favorites:
+        del favorites[entity_id]
     else:
-        icon = str(default_icon)
+        favorites[entity_id] = default_icon
 
-        if icon not in ICON_OPTIONS:
-            icon = "⭐"
-
-        updated[entity_id] = icon
-
-    save_favorites(updated)
+    save_favorites(favorites)
     st.rerun()
 
 
-def update_favorite_icon(entity_id, selected_icon, favorites):
-    """ユーザーが選んだアイコンを保存する。"""
+def change_favorite_icon(entity_id, icon):
+    """お気に入りアイコンを変更する。"""
+    favorites = load_favorites()
     entity_id = str(entity_id)
 
     if entity_id not in favorites:
         return
 
-    if selected_icon not in ICON_OPTIONS:
-        return
-
-    updated = dict(favorites)
-    updated[entity_id] = selected_icon
-    save_favorites(updated)
+    favorites[entity_id] = icon
+    save_favorites(favorites)
     st.rerun()
 
 
+# ------------------------------------------------------------------
+# API取得
+# ------------------------------------------------------------------
+
 @st.cache_data(ttl=3600)
 def get_attractions(park_id):
-    """施設名・ID・座標をAPIから取得する。"""
+    """ThemeParks.wikiからアトラクションと座標を取る。"""
     response = requests.get(
-        f"{API}/{park_id}/children",
-        timeout=15,
+        f"{THEMEPARKS_API}/{park_id}/children",
+        timeout=20,
     )
     response.raise_for_status()
 
@@ -214,22 +230,28 @@ def get_attractions(park_id):
         if lat is None or lon is None:
             continue
 
-        rows.append({
-            "entity_id": item.get("id") or item.get("entityId"),
-            "name": item.get("name", "名称不明"),
-            "lat": lat,
-            "lon": lon,
-        })
+        rows.append(
+            {
+                "entity_id": str(
+                    item.get("id") or item.get("entityId")
+                ),
+                "name_en": item.get("name", "名称不明"),
+                "lat": float(lat),
+                "lon": float(lon),
+                "type": "アトラクション",
+                "osm_tags": {},
+            }
+        )
 
     return rows
 
 
 @st.cache_data(ttl=300)
 def get_live_data(park_id):
-    """営業状態と待ち時間をAPIから取得する。"""
+    """ThemeParks.wikiから営業状況と待ち時間を取る。"""
     response = requests.get(
-        f"{API}/{park_id}/live",
-        timeout=15,
+        f"{THEMEPARKS_API}/{park_id}/live",
+        timeout=20,
     )
     response.raise_for_status()
 
@@ -243,213 +265,146 @@ def get_live_data(park_id):
             or {}
         )
 
-        rows.append({
-            "entity_id": item.get("id") or item.get("entityId"),
-            "status": item.get("status", "UNKNOWN"),
-            "wait_time": standby.get("waitTime"),
-        })
+        rows.append(
+            {
+                "entity_id": str(
+                    item.get("id") or item.get("entityId")
+                ),
+                "status": item.get("status", "UNKNOWN"),
+                "wait_time": standby.get("waitTime"),
+            }
+        )
 
     return rows
 
 
+def overpass_query(bbox):
+    """レストラン・ショップ・ランドマーク用のOverpassクエリ。"""
+    south, west, north, east = bbox
 
-@st.cache_data(ttl=604800)
-def get_park_boundaries():
+    return f"""
+    [out:json][timeout:25];
+    (
+      nwr["amenity"~"restaurant|cafe|fast_food|food_court"]
+          ({south},{west},{north},{east});
+      nwr["shop"]
+          ({south},{west},{north},{east});
+      nwr["tourism"="attraction"]
+          ({south},{west},{north},{east});
+      nwr["building"="castle"]
+          ({south},{west},{north},{east});
+      nwr["man_made"~"tower|lighthouse"]
+          ({south},{west},{north},{east});
+      nwr["historic"]
+          ({south},{west},{north},{east});
+    );
+    out center tags;
     """
-    OpenStreetMapのNominatimから、
-    ランドとシーのポリゴン輪郭を取得する。
 
-    取得結果は7日間キャッシュする。
+
+@st.cache_data(ttl=21600)
+def get_osm_pois(park_name):
     """
-    boundaries = {}
+    OpenStreetMapから飲食・買物・ランドマークを取る。
+    OSM側に登録がない項目は取得できない。
+    """
+    response = requests.post(
+        OVERPASS_API,
+        data={"data": overpass_query(PARKS[park_name]["bbox"])},
+        headers={"User-Agent": "DisneyParkNavigatorPrototype/1.0"},
+        timeout=35,
+    )
+    response.raise_for_status()
 
-    search_names = {
-        "東京ディズニーランド":
-            "東京ディズニーランド, 浦安市, 千葉県, 日本",
-        "東京ディズニーシー":
-            "東京ディズニーシー, 浦安市, 千葉県, 日本",
-    }
+    rows = []
 
-    headers = {
-        "User-Agent":
-            "DisneyDistanceWaitPrototype/1.0"
-    }
-
-    for index, (park, query) in enumerate(
-        search_names.items()
-    ):
-        # 公開Nominatimの負荷を避けるため1秒以上空ける
-        if index:
-            time.sleep(1.1)
-
-        response = requests.get(
-            NOMINATIM_API,
-            params={
-                "q": query,
-                "format": "jsonv2",
-                "polygon_geojson": 1,
-                "limit": 5,
-                "countrycodes": "jp",
-                "accept-language": "ja",
-                "viewbox":
-                    "139.865,35.645,139.905,35.615",
-                "bounded": 1,
-            },
-            headers=headers,
-            timeout=20,
+    for element in response.json().get("elements", []):
+        tags = element.get("tags") or {}
+        name = (
+            tags.get("name:ja")
+            or tags.get("name")
+            or tags.get("name:en")
         )
-        response.raise_for_status()
 
-        for item in response.json():
-            geometry = item.get("geojson") or {}
+        if not name:
+            continue
 
-            if geometry.get("type") not in {
-                "Polygon",
-                "MultiPolygon",
-            }:
-                continue
+        lat = element.get("lat")
+        lon = element.get("lon")
 
-            display_name = str(
-                item.get("display_name", "")
-            )
+        if lat is None or lon is None:
+            center = element.get("center") or {}
+            lat = center.get("lat")
+            lon = center.get("lon")
 
-            if (
-                park in display_name
-                or "Disneyland" in display_name
-                or "DisneySea" in display_name
-            ):
-                boundaries[park] = geometry
-                break
+        if lat is None or lon is None:
+            continue
 
-    return boundaries
+        amenity = tags.get("amenity", "")
+        shop = tags.get("shop", "")
+
+        if amenity in {
+            "restaurant",
+            "cafe",
+            "fast_food",
+            "food_court",
+        }:
+            poi_type = "レストラン"
+        elif shop:
+            poi_type = "ショップ"
+        else:
+            poi_type = "ランドマーク"
+
+        osm_id = f"osm:{element.get('type')}:{element.get('id')}"
+
+        rows.append(
+            {
+                "entity_id": osm_id,
+                "name_en": name,
+                "name_ja": name,
+                "lat": float(lat),
+                "lon": float(lon),
+                "type": poi_type,
+                "status": "UNKNOWN",
+                "wait_time": pd.NA,
+                "osm_tags": tags,
+            }
+        )
+
+    return rows
 
 
-def geometry_points(geometry):
-    """GeoJSON内の全緯度・経度を取り出す。"""
-    points = []
+# ------------------------------------------------------------------
+# 計算・表示情報
+# ------------------------------------------------------------------
 
-    def walk(value):
-        if not isinstance(value, list) or not value:
-            return
+def normalize_location(value):
+    """GPS部品の返却形式から緯度・経度を取り出す。"""
+    if not isinstance(value, dict):
+        return None
+
+    for candidate in (
+        value,
+        value.get("coords"),
+        value.get("location"),
+    ):
+        if not isinstance(candidate, dict):
+            continue
 
         if (
-            len(value) >= 2
-            and isinstance(value[0], (int, float))
-            and isinstance(value[1], (int, float))
+            candidate.get("latitude") is not None
+            and candidate.get("longitude") is not None
         ):
-            # GeoJSONは経度、緯度の順
-            points.append([value[1], value[0]])
-            return
+            return {
+                "latitude": float(candidate["latitude"]),
+                "longitude": float(candidate["longitude"]),
+            }
 
-        for child in value:
-            walk(child)
-
-    walk(geometry.get("coordinates", []))
-    return points
-
-
-def add_park_boundaries(disney_map, boundaries):
-    """
-    OSMの輪郭を加工せず、そのまま地図へ描画する。
-    """
-    styles = {
-        "東京ディズニーランド": "#059669",
-        "東京ディズニーシー": "#2563eb",
-    }
-
-    all_points = []
-
-    for park, geometry in boundaries.items():
-        color = styles[park]
-        selected = park == park_name
-
-        feature = {
-            "type": "Feature",
-            "properties": {
-                "park_name": park,
-            },
-            "geometry": geometry,
-        }
-
-        folium.GeoJson(
-            data=feature,
-            name=park,
-            style_function=(
-                lambda feature,
-                color=color,
-                selected=selected: {
-                    "color": color,
-                    "weight": 5 if selected else 3,
-                    "opacity": 1,
-                    "fill": True,
-                    "fillColor": color,
-                    "fillOpacity":
-                        0.16 if selected else 0.07,
-                }
-            ),
-            highlight_function=(
-                lambda feature,
-                color=color: {
-                    "color": color,
-                    "weight": 7,
-                    "fillOpacity": 0.22,
-                }
-            ),
-            tooltip=folium.GeoJsonTooltip(
-                fields=["park_name"],
-                aliases=[""],
-                labels=False,
-                sticky=True,
-            ),
-        ).add_to(disney_map)
-
-        all_points.extend(
-            geometry_points(geometry)
-        )
-
-    if all_points:
-        disney_map.fit_bounds(
-            all_points,
-            padding=(20, 20),
-        )
-
-    legend = """
-    <div style="
-        position:fixed;
-        top:12px;
-        right:12px;
-        z-index:9999;
-        background:rgba(255,255,255,.95);
-        padding:8px 11px;
-        border-radius:8px;
-        box-shadow:0 2px 7px rgba(0,0,0,.25);
-        font-size:13px;
-    ">
-        <div>
-            <span style="color:#059669;">■</span>
-            ランド
-        </div>
-        <div>
-            <span style="color:#2563eb;">■</span>
-            シー
-        </div>
-        <div style="
-            font-size:11px;
-            color:#666;
-            margin-top:3px;
-        ">
-            太い輪郭＝選択中
-        </div>
-    </div>
-    """
-
-    disney_map.get_root().html.add_child(
-        folium.Element(legend)
-    )
+    return None
 
 
 def distance_m(lat1, lon1, lat2, lon2):
-    """現在地から施設までの直線距離を計算する。"""
+    """2地点の直線距離。"""
     radius = 6_371_000
 
     lat1, lon1, lat2, lon2 = map(
@@ -460,7 +415,7 @@ def distance_m(lat1, lon1, lat2, lon2):
     d_lat = lat2 - lat1
     d_lon = lon2 - lon1
 
-    a = (
+    value = (
         math.sin(d_lat / 2) ** 2
         + math.cos(lat1)
         * math.cos(lat2)
@@ -468,96 +423,417 @@ def distance_m(lat1, lon1, lat2, lon2):
     )
 
     return radius * 2 * math.atan2(
-        math.sqrt(a),
-        math.sqrt(1 - a),
+        math.sqrt(value),
+        math.sqrt(1 - value),
     )
 
 
-def normalize_location(value):
-    """GPS部品の返却形式から緯度・経度を取り出す。"""
-    if not isinstance(value, dict):
-        return None
+def poi_details(row):
+    """OSMタグから施設説明を組み立てる。"""
+    tags = row.get("osm_tags") or {}
 
-    for candidate in [
-        value,
-        value.get("coords"),
-        value.get("location"),
-    ]:
-        if not isinstance(candidate, dict):
-            continue
+    cuisine_raw = tags.get("cuisine", "")
+    cuisine = (
+        cuisine_raw.replace(";", "・")
+        if cuisine_raw
+        else "情報なし"
+    )
 
-        if (
-            candidate.get("latitude") is not None
-            and candidate.get("longitude") is not None
-        ):
-            return candidate
+    amenity_labels = {
+        "restaurant": "テーブルサービス系",
+        "cafe": "カフェ系",
+        "fast_food": "カウンターサービス系",
+        "food_court": "フードコート系",
+    }
 
-    return None
+    style = amenity_labels.get(
+        tags.get("amenity", ""),
+        "情報なし",
+    )
+
+    price = (
+        tags.get("price")
+        or tags.get("charge")
+        or tags.get("fee")
+        or "API情報なし"
+    )
+
+    opening_hours = tags.get("opening_hours") or "情報なし"
+
+    return {
+        "cuisine": cuisine,
+        "style": style,
+        "price": price,
+        "opening_hours": opening_hours,
+    }
 
 
-STATUS = {
-    "OPERATING": "営業中",
-    "DOWN": "一時休止",
-    "CLOSED": "受付終了",
-    "REFURBISHMENT": "休止中",
-    "UNKNOWN": "情報なし",
-}
+def is_cool_spot(row):
+    """
+    涼しい場所の候補判定。
+    アトラクションはCSVの待機列情報、
+    その他施設はOSMタグと施設種別から判定する。
+    """
+    if row["type"] == "アトラクション":
+        return row.get("queue_type") in {"屋内", "屋根あり"}
+
+    tags = row.get("osm_tags") or {}
+
+    if (
+        tags.get("indoor") == "yes"
+        or tags.get("covered") == "yes"
+        or tags.get("building")
+    ):
+        return True
+
+    # レストラン・ショップは屋内店舗が多いため候補扱い。
+    # 確定情報ではないので表示上も「候補」とする。
+    return row["type"] in {"レストラン", "ショップ"}
 
 
-park_name = st.selectbox("パーク", list(PARKS))
+def official_url(park_name, facility_type):
+    """施設種別に対応する東京ディズニー公式ページ。"""
+    return PARKS[park_name]["official"].get(
+        facility_type,
+        PARKS[park_name]["official"]["ランドマーク"],
+    )
 
-sort_type = st.radio(
+
+def balanced_score(frame):
+    """
+    距離と待ち時間を0～1へ正規化し、同じ重みで合算する。
+    待ち時間がない施設は距離を中心に評価する。
+    """
+    result = frame.copy()
+
+    max_distance = max(float(result["distance_m"].max()), 1.0)
+    result["_distance_score"] = result["distance_m"] / max_distance
+
+    attraction_mask = result["type"] == "アトラクション"
+    waits = pd.to_numeric(
+        result.loc[attraction_mask, "wait_time"],
+        errors="coerce",
+    )
+
+    max_wait = max(float(waits.max()) if waits.notna().any() else 1.0, 1.0)
+
+    result["_wait_score"] = 0.0
+    result.loc[attraction_mask, "_wait_score"] = (
+        pd.to_numeric(
+            result.loc[attraction_mask, "wait_time"],
+            errors="coerce",
+        )
+        .fillna(max_wait)
+        / max_wait
+    )
+
+    result["_balance_score"] = (
+        result["_distance_score"] * 0.5
+        + result["_wait_score"] * 0.5
+    )
+
+    return result
+
+
+# ------------------------------------------------------------------
+# 徒歩ルート
+# ------------------------------------------------------------------
+
+def decode_polyline6(encoded):
+    """Valhallaのencoded polyline（精度6）を緯度経度へ戻す。"""
+    coordinates = []
+    index = 0
+    lat = 0
+    lon = 0
+    factor = 1_000_000
+
+    while index < len(encoded):
+        values = []
+
+        for _ in range(2):
+            result = 0
+            shift = 0
+
+            while True:
+                byte = ord(encoded[index]) - 63
+                index += 1
+                result |= (byte & 0x1F) << shift
+                shift += 5
+
+                if byte < 0x20:
+                    break
+
+            delta = ~(result >> 1) if result & 1 else result >> 1
+            values.append(delta)
+
+        lat += values[0]
+        lon += values[1]
+        coordinates.append([lat / factor, lon / factor])
+
+    return coordinates
+
+
+@st.cache_data(ttl=300)
+def get_walking_route(start_lat, start_lon, end_lat, end_lon):
+    """
+    Valhallaの歩行者ルートを取得する。
+    OSM上の通路データを使うため、当日の通行規制までは反映しない。
+    """
+    request_data = {
+        "locations": [
+            {"lat": start_lat, "lon": start_lon},
+            {"lat": end_lat, "lon": end_lon},
+        ],
+        "costing": "pedestrian",
+        "units": "kilometers",
+        "language": "ja-JP",
+        "directions_options": {
+            "units": "kilometers",
+        },
+    }
+
+    response = requests.get(
+        VALHALLA_API,
+        params={
+            "json": json.dumps(
+                request_data,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+
+    trip = response.json().get("trip") or {}
+    legs = trip.get("legs") or []
+
+    if not legs:
+        raise ValueError("徒歩ルートが返されませんでした。")
+
+    summary = trip.get("summary") or {}
+    shape = legs[0].get("shape")
+
+    if not shape:
+        raise ValueError("ルート形状が返されませんでした。")
+
+    return {
+        "points": decode_polyline6(shape),
+        "distance_km": summary.get("length"),
+        "time_seconds": summary.get("time"),
+    }
+
+
+# ------------------------------------------------------------------
+# 地図
+# ------------------------------------------------------------------
+
+def add_facility_marker(disney_map, row, favorites):
+    """施設マーカーを追加する。"""
+    entity_id = str(row["entity_id"])
+    is_favorite = entity_id in favorites
+    type_icon = TYPE_ICONS.get(row["type"], "📍")
+    marker_text = favorites.get(entity_id, type_icon)
+
+    wait_value = row.get("wait_time")
+    wait_text = (
+        f"{int(wait_value)}分"
+        if pd.notna(wait_value)
+        else "待ち時間なし"
+    )
+
+    display_name = row["name_ja"]
+
+    popup = f"""
+    <b>{marker_text} {display_name}</b><br>
+    種類：{row["type"]}<br>
+    直線距離：{int(row["distance_m"])}m<br>
+    待ち時間：{wait_text}<br>
+    """
+
+    if is_favorite:
+        marker_icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width:34px;
+                height:34px;
+                border-radius:50%;
+                background:white;
+                border:3px solid #f5b301;
+                box-shadow:0 2px 5px rgba(0,0,0,.35);
+                font-size:20px;
+                line-height:28px;
+                text-align:center;
+            ">{marker_text}</div>
+            """,
+            icon_size=(34, 34),
+            icon_anchor=(17, 17),
+        )
+    else:
+        color = {
+            "アトラクション": "red",
+            "レストラン": "green",
+            "ショップ": "purple",
+            "ランドマーク": "cadetblue",
+        }.get(row["type"], "gray")
+
+        marker_icon = folium.Icon(
+            color=color,
+            icon="info-sign",
+        )
+
+    folium.Marker(
+        [row["lat"], row["lon"]],
+        tooltip=f"{marker_text} {display_name}",
+        popup=folium.Popup(popup, max_width=300),
+        icon=marker_icon,
+    ).add_to(disney_map)
+
+
+def make_overview_map(frame, location, favorites):
+    """一覧確認用の小さい地図。"""
+    disney_map = folium.Map(
+        location=[
+            location["latitude"],
+            location["longitude"],
+        ],
+        zoom_start=16,
+        control_scale=True,
+        dragging=False,
+        touch_zoom=False,
+        double_click_zoom=False,
+        box_zoom=False,
+        keyboard=False,
+        scroll_wheel_zoom=False,
+    )
+
+    folium.Marker(
+        [
+            location["latitude"],
+            location["longitude"],
+        ],
+        tooltip="現在地",
+        icon=folium.Icon(
+            color="blue",
+            icon="user",
+        ),
+    ).add_to(disney_map)
+
+    for _, row in frame.head(60).iterrows():
+        add_facility_marker(disney_map, row, favorites)
+
+    return disney_map
+
+
+def make_route_map(route, target, location):
+    """選択施設までの徒歩ルート専用地図。"""
+    disney_map = folium.Map(
+        location=[
+            location["latitude"],
+            location["longitude"],
+        ],
+        zoom_start=17,
+        control_scale=True,
+        scroll_wheel_zoom=False,
+    )
+
+    folium.PolyLine(
+        route["points"],
+        color="#2563eb",
+        weight=7,
+        opacity=0.85,
+        tooltip="徒歩ルート",
+    ).add_to(disney_map)
+
+    folium.Marker(
+        [
+            location["latitude"],
+            location["longitude"],
+        ],
+        tooltip="現在地",
+        icon=folium.Icon(
+            color="blue",
+            icon="user",
+        ),
+    ).add_to(disney_map)
+
+    folium.Marker(
+        [target["lat"], target["lon"]],
+        tooltip=target["name_ja"],
+        icon=folium.Icon(
+            color="red",
+            icon="flag",
+        ),
+    ).add_to(disney_map)
+
+    disney_map.fit_bounds(
+        route["points"],
+        padding=(20, 20),
+    )
+
+    return disney_map
+
+
+# ------------------------------------------------------------------
+# 画面
+# ------------------------------------------------------------------
+
+park_name = st.selectbox(
+    "パーク",
+    list(PARKS),
+)
+
+facility_types = st.multiselect(
+    "表示する施設",
+    [
+        "アトラクション",
+        "レストラン",
+        "ショップ",
+        "ランドマーク",
+    ],
+    default=[
+        "アトラクション",
+        "レストラン",
+        "ショップ",
+        "ランドマーク",
+    ],
+)
+
+sort_mode = st.selectbox(
     "並べ替え",
-    ["距離が近い順", "待ち時間が短い順"],
-    horizontal=True,
-)
-
-open_only = st.checkbox("営業中だけ表示")
-
-queue_filter = st.selectbox(
-    "待機列の環境",
     [
-        "すべて",
-        "雨を避けやすい",
-        "屋内",
-        "屋根あり",
-        "一部屋根あり",
-        "屋外",
-        "不明",
+        "距離が近い順",
+        "待ち時間が短い順",
+        "距離＋待ち時間のバランス順",
     ],
 )
 
-st.caption(
-    "待機列環境は実用上の目安です。"
-    "混雑時の列の延長や運営変更で変わる場合があります。"
+filter_col1, filter_col2 = st.columns(2)
+
+with filter_col1:
+    cool_only = st.checkbox(
+        "🧊 涼しいスポット候補",
+        value=False,
+    )
+
+with filter_col2:
+    avoid_thrill = st.checkbox(
+        "😱 絶叫強めを除外",
+        value=False,
+    )
+
+search_word = st.text_input(
+    "施設名を検索",
+    placeholder="例：城、カフェ、トイ・ストーリー",
 )
 
-thrill_filter = st.selectbox(
-    "絶叫レベル",
-    [
-        "すべて",
-        "絶叫強めを除外",
-        "軽いスリルも除外",
-        "絶叫強めだけ",
-        "軽いスリルだけ",
-        "穏やかだけ",
-    ],
+max_results = st.slider(
+    "表示件数",
+    min_value=10,
+    max_value=80,
+    value=30,
+    step=10,
 )
-
-st.caption(
-    "絶叫レベルは公式の「スピード／スリルあり」を参考にした"
-    "実用上の目安です。感じ方には個人差があります。"
-)
-
-map_interactive = st.checkbox(
-    "地図を操作する",
-    value=False,
-    help=(
-        "オフのときは地図上を指でなぞっても、"
-        "ページを上下にスクロールできます。"
-    ),
-)
-
 
 location_raw = gps_location_button(
     buttonText="現在地を取得"
@@ -573,77 +849,116 @@ if location is None:
     st.stop()
 
 
+# データ取得
 try:
-    park_boundaries = get_park_boundaries()
+    with st.spinner("施設情報を取得しています…"):
+        attraction_rows = get_attractions(
+            PARKS[park_name]["id"]
+        )
+        live_rows = get_live_data(
+            PARKS[park_name]["id"]
+        )
 
-    place_df = pd.DataFrame(
-        get_attractions(PARKS[park_name]),
-        columns=["entity_id", "name", "lat", "lon"],
-    )
-
-    live_df = pd.DataFrame(
-        get_live_data(PARKS[park_name]),
-        columns=["entity_id", "status", "wait_time"],
-    )
+        try:
+            poi_rows = get_osm_pois(park_name)
+            osm_error = None
+        except requests.RequestException as error:
+            poi_rows = []
+            osm_error = error
 
 except requests.RequestException as error:
-    st.error(f"API接続エラー：{error}")
+    st.error(f"アトラクションAPI接続エラー：{error}")
     st.stop()
 
 
-if len(park_boundaries) < 2:
-    st.warning(
-        "パークの輪郭を取得できませんでした。"
-        "アトラクション一覧はそのまま利用できます。"
-    )
+attraction_df = pd.DataFrame(attraction_rows)
+live_df = pd.DataFrame(live_rows)
+master_df = load_attraction_master()
 
-
-if place_df.empty:
-    st.error("座標付きアトラクションを取得できませんでした。")
+if attraction_df.empty:
+    st.error("アトラクションを取得できませんでした。")
     st.stop()
 
+# アトラクションへ日本語名などを追加
+if not master_df.empty:
+    useful_columns = [
+        column
+        for column in [
+            "entity_id",
+            "name_ja",
+            "icon",
+            "queue_type",
+            "queue_icon",
+            "weather_note",
+            "thrill_level",
+            "thrill_icon",
+            "thrill_note",
+        ]
+        if column in master_df.columns
+    ]
 
-df = (
-    place_df
-    .merge(
-        get_japanese_names(),
+    attraction_df = attraction_df.merge(
+        master_df[useful_columns],
         on="entity_id",
         how="left",
     )
-    .merge(
+
+attraction_df["name_ja"] = (
+    attraction_df.get("name_ja")
+    .fillna(attraction_df["name_en"])
+)
+
+if not live_df.empty:
+    attraction_df = attraction_df.merge(
         live_df,
         on="entity_id",
         how="left",
     )
+else:
+    attraction_df["status"] = "UNKNOWN"
+    attraction_df["wait_time"] = pd.NA
+
+attraction_df["status"] = (
+    attraction_df["status"]
+    .fillna("UNKNOWN")
+)
+attraction_df["状況"] = attraction_df["status"].map(
+    lambda value: STATUS_JA.get(
+        str(value).upper(),
+        str(value),
+    )
 )
 
-df["name_ja"] = df["name_ja"].fillna(df["name"])
-df["icon"] = df["icon"].fillna("🎡")
-df["queue_type"] = df["queue_type"].fillna("不明")
-df["queue_icon"] = df["queue_icon"].fillna("❓")
-df["weather_note"] = df["weather_note"].fillna("要確認")
-df["thrill_level"] = df["thrill_level"].fillna("穏やか")
-df["thrill_icon"] = df["thrill_icon"].fillna("🙂")
-df["thrill_note"] = df["thrill_note"].fillna(
-    "大きな絶叫要素なし"
-)
+# OSM施設と結合
+poi_df = pd.DataFrame(poi_rows)
 
-missing_df = df[df["name_ja"] == df["name"]]
+if not poi_df.empty:
+    poi_df["状況"] = "情報なし"
+    poi_df["queue_type"] = pd.NA
+    poi_df["thrill_level"] = "穏やか"
+    poi_df["icon"] = poi_df["type"].map(TYPE_ICONS)
 
-if not missing_df.empty:
-    st.warning(
-        f"日本語名が未登録の施設が"
-        f"{len(missing_df)}件あります。"
+    # 同じ名前のアトラクションがOSMにもある場合は重複を避ける
+    attraction_names = set(
+        attraction_df["name_ja"]
+        .astype(str)
+        .str.lower()
     )
 
-    with st.expander("未登録施設を確認"):
-        st.dataframe(
-            missing_df[["entity_id", "name"]],
-            hide_index=True,
-        )
+    poi_df = poi_df[
+        ~poi_df["name_ja"]
+        .astype(str)
+        .str.lower()
+        .isin(attraction_names)
+    ]
 
+all_df = pd.concat(
+    [attraction_df, poi_df],
+    ignore_index=True,
+    sort=False,
+)
 
-df["distance_m"] = df.apply(
+all_df["distance_m"] = all_df.apply(
     lambda row: round(
         distance_m(
             location["latitude"],
@@ -655,399 +970,420 @@ df["distance_m"] = df.apply(
     axis=1,
 )
 
-df["wait_time"] = pd.to_numeric(
-    df["wait_time"],
+all_df["wait_time"] = pd.to_numeric(
+    all_df["wait_time"],
     errors="coerce",
 ).astype("Int64")
 
-df["status"] = df["status"].fillna("UNKNOWN")
-df["状況"] = df["status"].map(
-    lambda value: STATUS.get(
-        str(value).upper(),
-        value,
-    )
-)
-
-favorites = load_favorites()
-
-df["お気に入り"] = (
-    df["entity_id"]
-    .astype(str)
-    .isin(favorites.keys())
-)
-
-# お気に入りはユーザーが選んだアイコンを優先する
-df["favorite_icon"] = df.apply(
-    lambda row: favorites.get(
-        str(row["entity_id"]),
-        row["icon"],
-    ),
+all_df["cool_spot"] = all_df.apply(
+    is_cool_spot,
     axis=1,
 )
 
-if open_only:
-    df = df[
-        df["status"].str.upper() == "OPERATING"
+all_df["official_url"] = all_df["type"].map(
+    lambda facility_type:
+        official_url(park_name, facility_type)
+)
+
+# 絞り込み
+display_df = all_df[
+    all_df["type"].isin(facility_types)
+].copy()
+
+if cool_only:
+    display_df = display_df[
+        display_df["cool_spot"]
     ]
 
-if queue_filter == "雨を避けやすい":
-    df = df[
-        df["queue_type"].isin(["屋内", "屋根あり"])
-    ]
-elif queue_filter != "すべて":
-    df = df[
-        df["queue_type"] == queue_filter
-    ]
-
-if thrill_filter == "絶叫強めを除外":
-    df = df[
-        df["thrill_level"] != "絶叫強め"
-    ]
-elif thrill_filter == "軽いスリルも除外":
-    df = df[
-        df["thrill_level"] == "穏やか"
-    ]
-elif thrill_filter == "絶叫強めだけ":
-    df = df[
-        df["thrill_level"] == "絶叫強め"
-    ]
-elif thrill_filter == "軽いスリルだけ":
-    df = df[
-        df["thrill_level"] == "軽いスリル"
-    ]
-elif thrill_filter == "穏やかだけ":
-    df = df[
-        df["thrill_level"] == "穏やか"
+if avoid_thrill:
+    display_df = display_df[
+        display_df.get(
+            "thrill_level",
+            pd.Series(
+                "穏やか",
+                index=display_df.index,
+            ),
+        ) != "絶叫強め"
     ]
 
-if sort_type == "距離が近い順":
-    df = df.sort_values("distance_m")
-else:
-    df = df.sort_values(
+if search_word.strip():
+    display_df = display_df[
+        display_df["name_ja"]
+        .astype(str)
+        .str.contains(
+            search_word.strip(),
+            case=False,
+            na=False,
+        )
+    ]
+
+# 並べ替え
+if sort_mode == "距離が近い順":
+    display_df = display_df.sort_values(
+        ["distance_m", "wait_time"],
+        na_position="last",
+    )
+
+elif sort_mode == "待ち時間が短い順":
+    display_df = display_df.sort_values(
         ["wait_time", "distance_m"],
         na_position="last",
     )
 
-df = df.reset_index(drop=True)
-df["rank"] = df.index + 1
-
-
-def wait_text(row):
-    """待ち時間の表示文字を作る。"""
-    if pd.isna(row["wait_time"]):
-        return "情報なし"
-
-    return f'{int(row["wait_time"])}分'
-
-
-def make_map(map_df):
-    """
-    通常施設は赤いマーカー、
-    お気に入りだけ専用絵文字マーカーで表示する。
-    """
-    disney_map = folium.Map(
-        location=[
-            location["latitude"],
-            location["longitude"],
-        ],
-        zoom_start=16,
-        control_scale=True,
-
-        # スマホでは通常時に地図が指の動きを奪わないようにする
-        dragging=map_interactive,
-        touch_zoom=map_interactive,
-        double_click_zoom=map_interactive,
-        box_zoom=map_interactive,
-        keyboard=map_interactive,
-        scroll_wheel_zoom=False,
+else:
+    display_df = balanced_score(
+        display_df
+    ).sort_values(
+        ["_balance_score", "distance_m"],
+        na_position="last",
     )
 
-    # OSMに登録されたパーク輪郭をそのまま描画
-    add_park_boundaries(
-        disney_map,
-        park_boundaries,
+display_df = display_df.head(max_results).reset_index(drop=True)
+
+favorites = load_favorites()
+icon_catalog = load_icon_catalog()
+
+if osm_error:
+    st.warning(
+        "レストラン・ショップ・ランドマークの"
+        "OSM取得に失敗しました。"
+        "今回はアトラクションだけ表示します。"
     )
 
-    folium.Marker(
-        location=[
-            location["latitude"],
-            location["longitude"],
-        ],
-        tooltip="現在地",
-        popup="現在地",
-        icon=folium.Icon(
-            color="blue",
-            icon="user",
-        ),
-    ).add_to(disney_map)
+st.caption(
+    f"表示：{len(display_df)}件／"
+    f"取得施設：{len(all_df)}件"
+)
 
-    for _, row in map_df.iterrows():
-        favorite = bool(row["お気に入り"])
-        icon_text = row["favorite_icon"] if favorite else ""
-        display_name = (
-            f'{icon_text} {row["name_ja"]}'
-            if favorite
-            else row["name_ja"]
+
+# 選択中ルート
+route_target = st.session_state.get("route_target")
+
+if route_target:
+    st.subheader(f"🚶 {route_target['name_ja']}へ行く")
+
+    try:
+        with st.spinner("徒歩ルートを計算しています…"):
+            route = get_walking_route(
+                location["latitude"],
+                location["longitude"],
+                route_target["lat"],
+                route_target["lon"],
+            )
+
+        route_distance = route.get("distance_km")
+        route_seconds = route.get("time_seconds")
+
+        metric_col1, metric_col2 = st.columns(2)
+
+        with metric_col1:
+            st.metric(
+                "徒歩ルート距離",
+                (
+                    f"{route_distance:.2f}km"
+                    if route_distance is not None
+                    else "情報なし"
+                ),
+            )
+
+        with metric_col2:
+            st.metric(
+                "徒歩目安",
+                (
+                    f"{math.ceil(route_seconds / 60)}分"
+                    if route_seconds is not None
+                    else "情報なし"
+                ),
+            )
+
+        folium_static(
+            make_route_map(
+                route,
+                route_target,
+                location,
+            ),
+            width=700,
+            height=280,
         )
 
-        popup_text = f"""
-        <b>{display_name}</b><br>
-        直線距離：{row["distance_m"]}m<br>
-        待ち時間：{wait_text(row)}<br>
-        待機列：{row["queue_icon"]} {row["queue_type"]}<br>
-        天候：{row["weather_note"]}<br>
-        絶叫度：{row["thrill_icon"]} {row["thrill_level"]}<br>
-        注意：{row["thrill_note"]}<br>
-        状況：{row["状況"]}
-        """
+        st.caption(
+            "OpenStreetMap上の歩行可能な通路から計算した目安です。"
+            "当日の規制・一方通行・入場制限は公式案内を優先してください。"
+        )
 
-        if favorite:
-            marker_icon = folium.DivIcon(
-                html=f"""
-                <div style="
-                    width:38px;
-                    height:38px;
-                    border-radius:50%;
-                    background:white;
-                    border:3px solid #f5b301;
-                    box-shadow:0 2px 6px rgba(0,0,0,.35);
-                    font-size:23px;
-                    line-height:32px;
-                    text-align:center;
-                ">{icon_text}</div>
-                """,
-                icon_size=(38, 38),
-                icon_anchor=(19, 19),
-            )
-        else:
-            marker_icon = folium.Icon(
-                color="red",
-                icon="info-sign",
-            )
+    except (requests.RequestException, ValueError) as error:
+        st.error(f"徒歩ルートを取得できませんでした：{error}")
 
-        folium.Marker(
-            location=[row["lat"], row["lon"]],
-            tooltip=display_name,
-            popup=folium.Popup(
-                popup_text,
-                max_width=300,
-            ),
-            icon=marker_icon,
-        ).add_to(disney_map)
-
-    return disney_map
+    if st.button("ルート表示を閉じる"):
+        st.session_state.pop("route_target", None)
+        st.rerun()
 
 
-def show_cards(card_df, key_prefix):
-    """
-    通常施設：名前・待ち時間・☆
-    お気に入り：選択式アイコン・名前・待ち時間・★
-    """
-    for _, row in card_df.iterrows():
-        favorite = bool(row["お気に入り"])
+# 一覧地図は折りたたみ
+with st.expander("🗺️ 施設の地図を見る", expanded=False):
+    st.caption(
+        "地図はスマホでスクロールしやすいよう、小さく固定しています。"
+    )
+
+    folium_static(
+        make_overview_map(
+            display_df,
+            location,
+            favorites,
+        ),
+        width=700,
+        height=230,
+    )
+
+
+# タブ
+all_tab, favorite_tab = st.tabs(
+    [
+        "施設一覧",
+        f"⭐ お気に入り（{len(favorites)}）",
+    ]
+)
+
+
+def show_facility_cards(frame, key_prefix):
+    """施設カードを表示する。"""
+    for index, row in frame.iterrows():
         entity_id = str(row["entity_id"])
+        favorite = entity_id in favorites
+        favorite_icon = favorites.get(
+            entity_id,
+            row.get("icon") or TYPE_ICONS.get(row["type"], "📍"),
+        )
+
+        type_icon = TYPE_ICONS.get(row["type"], "📍")
 
         with st.container(border=True):
-            icon_col, name_col, wait_col, star_col = st.columns(
-                [1.35, 4.15, 1.2, 0.8],
+            title_col, star_col = st.columns(
+                [5, 1],
                 vertical_alignment="center",
             )
 
-            # お気に入りだけ、押すと大量のアイコンから選べる
-            if favorite:
-                current_icon = row["favorite_icon"]
-
-                if current_icon not in ICON_OPTIONS:
-                    current_icon = "⭐"
-
-                current_category = ICON_CATEGORIES.get(
-                    current_icon,
-                    CATEGORY_OPTIONS[0],
+            with title_col:
+                title_icon = (
+                    favorite_icon
+                    if favorite
+                    else type_icon
                 )
 
-                with icon_col.popover(
-                    f"{current_icon} 変更",
+                st.markdown(
+                    f"### {title_icon} {row['name_ja']}"
+                )
+
+                info_parts = [
+                    row["type"],
+                    f"{int(row['distance_m'])}m",
+                ]
+
+                if row["type"] == "アトラクション":
+                    wait_text = (
+                        f"{int(row['wait_time'])}分待ち"
+                        if pd.notna(row["wait_time"])
+                        else "待ち時間情報なし"
+                    )
+                    info_parts.append(wait_text)
+                    info_parts.append(row.get("状況", "情報なし"))
+
+                st.caption(" ｜ ".join(info_parts))
+
+            with star_col:
+                if st.button(
+                    "★" if favorite else "☆",
+                    key=f"{key_prefix}_star_{entity_id}_{index}",
+                    help=(
+                        "お気に入りから外す"
+                        if favorite
+                        else "お気に入りに追加"
+                    ),
                     use_container_width=True,
-                    help="アイコンをカテゴリから選択",
                 ):
-                    selected_category = st.selectbox(
-                        "カテゴリ",
-                        CATEGORY_OPTIONS,
-                        index=CATEGORY_OPTIONS.index(
-                            current_category
-                        ),
-                        key=(
-                            f"icon_category_"
-                            f"{key_prefix}_{entity_id}"
-                        ),
+                    toggle_favorite(
+                        entity_id,
+                        row.get("icon")
+                        or TYPE_ICONS.get(row["type"], "⭐"),
                     )
 
-                    category_icons = ICONS_BY_CATEGORY[
-                        selected_category
+            # 施設固有情報
+            if row["type"] == "アトラクション":
+                detail_parts = []
+
+                if pd.notna(row.get("queue_type")):
+                    detail_parts.append(
+                        f"{row.get('queue_icon', '☂️')} "
+                        f"待機列：{row['queue_type']}"
+                    )
+
+                if pd.notna(row.get("thrill_level")):
+                    detail_parts.append(
+                        f"{row.get('thrill_icon', '🙂')} "
+                        f"{row['thrill_level']}"
+                    )
+
+                if row.get("cool_spot"):
+                    detail_parts.append("🧊 涼しい候補")
+
+                if detail_parts:
+                    st.write("　".join(detail_parts))
+
+            else:
+                details = poi_details(row)
+
+                if row["type"] == "レストラン":
+                    st.write(
+                        f"🍴 形式：{details['style']}　"
+                        f"料理：{details['cuisine']}"
+                    )
+                    st.write(
+                        f"💴 価格：{details['price']}　"
+                        f"🕒 営業時間：{details['opening_hours']}"
+                    )
+
+                elif row["type"] == "ショップ":
+                    shop_kind = (
+                        (row.get("osm_tags") or {}).get("shop")
+                        or "情報なし"
+                    )
+                    st.write(f"🛍️ ショップ種別：{shop_kind}")
+
+                if row.get("cool_spot"):
+                    st.write("🧊 涼しいスポット候補")
+
+            button_col1, button_col2 = st.columns(2)
+
+            with button_col1:
+                if st.button(
+                    "🚶 ここに行く",
+                    key=f"{key_prefix}_route_{entity_id}_{index}",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    st.session_state["route_target"] = {
+                        "entity_id": entity_id,
+                        "name_ja": row["name_ja"],
+                        "lat": float(row["lat"]),
+                        "lon": float(row["lon"]),
+                    }
+                    st.rerun()
+
+            with button_col2:
+                st.link_button(
+                    "🔗 公式ページを見る",
+                    row["official_url"],
+                    use_container_width=True,
+                )
+
+            # お気に入りだけアイコン変更
+            if favorite and not icon_catalog.empty:
+                with st.popover(
+                    f"{favorite_icon} アイコン変更",
+                    use_container_width=True,
+                ):
+                    categories = (
+                        icon_catalog["category"]
+                        .drop_duplicates()
+                        .tolist()
+                    )
+
+                    current_category = (
+                        icon_catalog.loc[
+                            icon_catalog["icon"] == favorite_icon,
+                            "category",
+                        ].iloc[0]
+                        if favorite_icon in set(icon_catalog["icon"])
+                        else categories[0]
+                    )
+
+                    category = st.selectbox(
+                        "カテゴリ",
+                        categories,
+                        index=categories.index(current_category),
+                        key=f"{key_prefix}_category_{entity_id}_{index}",
+                    )
+
+                    category_df = icon_catalog[
+                        icon_catalog["category"] == category
                     ]
 
-                    icon_state_key = (
-                        f"icon_value_"
-                        f"{key_prefix}_{entity_id}"
-                    )
-
-                    if (
-                        icon_state_key not in st.session_state
-                        or st.session_state[icon_state_key]
-                        not in category_icons
-                    ):
-                        st.session_state[icon_state_key] = (
-                            current_icon
-                            if current_icon in category_icons
-                            else category_icons[0]
+                    icons = category_df["icon"].tolist()
+                    icon_names = dict(
+                        zip(
+                            category_df["icon"],
+                            category_df["name"],
                         )
+                    )
 
                     selected_icon = st.selectbox(
                         "アイコン",
-                        category_icons,
-                        format_func=lambda icon: (
-                            f"{icon}  "
-                            f"{ICON_NAMES.get(icon, '')}"
-                        ),
-                        key=icon_state_key,
-                    )
-
-                    st.caption(
-                        f"{len(ICON_OPTIONS)}種類から選択できます。"
+                        icons,
+                        format_func=lambda icon:
+                            f"{icon} {icon_names.get(icon, '')}",
+                        key=f"{key_prefix}_icon_{entity_id}_{index}",
                     )
 
                     if st.button(
                         "このアイコンにする",
-                        key=(
-                            f"save_icon_"
-                            f"{key_prefix}_{entity_id}"
-                        ),
+                        key=f"{key_prefix}_save_icon_{entity_id}_{index}",
                         use_container_width=True,
                     ):
-                        update_favorite_icon(
+                        change_favorite_icon(
                             entity_id,
                             selected_icon,
-                            favorites,
                         )
-            else:
-                icon_col.write("")
-
-            name_col.markdown(
-                f"**{row['name_ja']}**  \n"
-                f"{row['distance_m']}m・{row['状況']}  \n"
-                f"{row['queue_icon']} {row['queue_type']}・"
-                f"{row['weather_note']}  \n"
-                f"{row['thrill_icon']} {row['thrill_level']}・"
-                f"{row['thrill_note']}"
-            )
-
-            wait_col.markdown(
-                f"**{wait_text(row)}**"
-            )
-
-            clicked = star_col.button(
-                "★" if favorite else "☆",
-                key=f"{key_prefix}_{entity_id}",
-                help=(
-                    "お気に入りから外す"
-                    if favorite
-                    else "お気に入りに追加"
-                ),
-                use_container_width=True,
-            )
-
-            if clicked:
-                toggle_favorite(
-                    entity_id,
-                    row["icon"],
-                    favorites,
-                )
-
-
-
-favorite_count = int(df["お気に入り"].sum())
-
-all_tab, favorite_tab = st.tabs([
-    "すべて",
-    f"お気に入り（{favorite_count}）",
-])
 
 
 with all_tab:
-    st.subheader("アトラクション一覧")
-    st.caption(
-        "☆でお気に入り登録後、左のアイコンを押すとカテゴリ別に選べます。"
-    )
-
-    show_cards(
-        df,
-        key_prefix=f"all_{park_name}",
-    )
-
-    st.subheader("パークマップ")
-    st.caption(
-        "緑がランド、青がシーです。"
-        "OpenStreetMapに登録された輪郭を"
-        "そのまま表示しています。"
-    )
-
-    folium_static(
-        make_map(df),
-        width=700,
-        height=330,
-    )
+    if display_df.empty:
+        st.info("条件に合う施設がありません。")
+    else:
+        show_facility_cards(
+            display_df,
+            key_prefix="all",
+        )
 
 
 with favorite_tab:
-    favorite_df = df[
-        df["お気に入り"]
+    favorite_df = all_df[
+        all_df["entity_id"]
+        .astype(str)
+        .isin(favorites.keys())
     ].copy()
 
     if favorite_df.empty:
-        st.info(
-            "まだお気に入りがありません。"
-            "「すべて」タブの☆を押してください。"
-        )
+        st.info("まだお気に入りがありません。")
+
     else:
-        st.subheader("お気に入り一覧")
-
-        show_cards(
-            favorite_df,
-            key_prefix=f"favorite_{park_name}",
+        favorite_df["distance_m"] = favorite_df.apply(
+            lambda row: round(
+                distance_m(
+                    location["latitude"],
+                    location["longitude"],
+                    row["lat"],
+                    row["lon"],
+                )
+            ),
+            axis=1,
         )
 
-        st.subheader("お気に入りマップ")
-        st.caption(
-            "緑がランド、青がシーです。"
-            "OpenStreetMapの輪郭データを使用しています。"
+        favorite_df["official_url"] = favorite_df["type"].map(
+            lambda facility_type:
+                official_url(park_name, facility_type)
         )
 
-        folium_static(
-            make_map(favorite_df),
-            width=900,
-            height=600,
+        favorite_df = favorite_df.sort_values("distance_m")
+
+        show_facility_cards(
+            favorite_df.reset_index(drop=True),
+            key_prefix="favorite",
         )
 
 
+st.divider()
 st.caption(
-    f"施設：{len(place_df)}件／"
-    f"ライブ情報：{len(live_df)}件"
-)
-
-st.caption(
-    "待機列環境はCSVに保存した目安です。"
-    "実際の列は混雑・工事・運営状況で変わる場合があります。"
-)
-
-st.caption(
-    "絶叫レベルは公式の特徴表示を参考に、"
-    "強め・軽め・穏やかへ分けた目安です。"
-)
-
-st.markdown(
-    "施設・待ち時間："
-    "[ThemeParks.wiki](https://www.themeparks.wiki/)　"
-    "地図・パーク輪郭："
-    "[OpenStreetMap contributors]"
-    "(https://www.openstreetmap.org/copyright)"
+    "待ち時間：ThemeParks.wiki／"
+    "施設・地図・ルート：OpenStreetMap関連サービス。"
+    "東京ディズニーリゾート公式アプリではありません。"
 )
