@@ -1,0 +1,402 @@
+:root{
+        --navy:#06284d;
+        --blue:#0877c9;
+        --sky:#dff3ff;
+        --gold:#f2c14e;
+        --pink:#ff7eaf;
+        --ink:#17324d;
+        --glass:rgba(255,255,255,.84);
+    }
+
+    html, body, [class*="css"]{
+        font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans",
+        "Yu Gothic UI","Yu Gothic",sans-serif;
+    }
+
+    .stApp{
+        background:
+          radial-gradient(circle at 12% 4%, rgba(80,190,255,.38), transparent 24%),
+          radial-gradient(circle at 88% 8%, rgba(255,126,175,.22), transparent 20%),
+          linear-gradient(180deg,#052b54 0,#0877c9 17rem,#dff3ff 36rem,#edf8ff 100%);
+        color:var(--ink);
+    }
+
+    .block-container{
+        max-width:760px;
+        padding-top:.7rem;
+        padding-left:.72rem;
+        padding-right:.72rem;
+        padding-bottom:5rem;
+    }
+
+    header[data-testid="stHeader"]{
+        background:transparent;
+    }
+
+    .hero{
+        position:relative;
+        overflow:hidden;
+        border-radius:26px;
+        padding:24px 20px 22px;
+        color:#fff;
+        background:
+          radial-gradient(circle at 82% 15%,rgba(255,255,255,.22),transparent 16%),
+          radial-gradient(circle at 16% 85%,rgba(255,255,255,.13),transparent 22%),
+          linear-gradient(135deg,rgba(4,49,91,.98),rgba(8,119,201,.94));
+        border:1px solid rgba(255,255,255,.2);
+        box-shadow:0 18px 40px rgba(0,26,60,.32);
+        margin-bottom:14px;
+    }
+
+    .hero:before,
+    .hero:after{
+        content:"✦";
+        position:absolute;
+        color:rgba(255,255,255,.78);
+        font-size:1.3rem;
+    }
+
+    .hero:before{right:24px;top:18px}
+    .hero:after{right:72px;top:52px;font-size:.8rem}
+
+    .hero-kicker{
+        font-size:.72rem;
+        font-weight:900;
+        letter-spacing:.16em;
+        opacity:.82;
+        margin-bottom:5px;
+    }
+
+    .hero h1{
+        color:#fff;
+        margin:0 0 6px;
+        font-size:1.72rem;
+        line-height:1.12;
+        font-weight:950;
+    }
+
+    .hero p{
+        margin:0;
+        color:rgba(255,255,255,.9);
+        font-size:.92rem;
+        font-weight:650;
+    }
+
+    .status-grid{
+        display:grid;
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:7px;
+        margin:10px 0 14px;
+    }
+
+    .status-card{
+        min-width:0;
+        border-radius:17px;
+        padding:10px 9px;
+        background:rgba(255,255,255,.9);
+        border:1px solid rgba(255,255,255,.52);
+        box-shadow:0 8px 20px rgba(5,49,88,.12);
+        backdrop-filter:blur(14px);
+    }
+
+    .status-label{
+        color:#67839d;
+        font-size:.65rem;
+        font-weight:900;
+        margin-bottom:3px;
+    }
+
+    .status-value{
+        color:var(--navy);
+        font-size:.78rem;
+        font-weight:950;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"]{
+        color:var(--ink)!important;
+        border:1px solid rgba(8,119,201,.16)!important;
+        border-radius:24px!important;
+        background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(239,249,255,.97))!important;
+        box-shadow:0 12px 30px rgba(5,49,88,.13)!important;
+        backdrop-filter:blur(15px);
+        overflow:hidden;
+        margin-bottom:12px;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] > div{
+        padding:15px 16px 14px!important;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] h3{
+        color:var(--navy);
+        font-size:1.13rem;
+        line-height:1.35;
+        margin:.15rem 0 .25rem;
+    }
+
+    .badge{
+        display:inline-block;
+        margin:3px 4px 3px 0;
+        padding:5px 9px;
+        border-radius:999px;
+        font-size:.73rem;
+        font-weight:900;
+        background:#e8f5ff;
+        color:#0867aa;
+    }
+
+    .badge-wait{
+        color:#fff;
+        background:linear-gradient(135deg,#0877c9,#00a9d6);
+        box-shadow:0 5px 12px rgba(8,119,201,.22);
+    }
+
+    .badge-gold{
+        background:#fff1c8;
+        color:#795600;
+    }
+
+    .route-box{
+        border-radius:22px;
+        padding:15px 16px;
+        margin:8px 0 12px;
+        color:#fff;
+        background:linear-gradient(135deg,#052b54,#0877c9);
+        box-shadow:0 13px 28px rgba(5,49,88,.24);
+    }
+
+    .route-box strong{color:#fff}
+
+    .stButton>button,
+    .stLinkButton>a{
+        min-height:42px;
+        border-radius:14px!important;
+        font-weight:900!important;
+        border:1px solid rgba(8,119,201,.16)!important;
+        box-shadow:0 5px 13px rgba(5,49,88,.08);
+    }
+
+    .stButton>button[kind="primary"]{
+        color:#fff!important;
+        border:0!important;
+        background:linear-gradient(135deg,#0877c9,#00a9d6)!important;
+    }
+
+    div[data-baseweb="select"]>div,
+    .stTextInput input{
+        border-radius:14px!important;
+        background:rgba(255,255,255,.92)!important;
+    }
+
+    .stTabs [data-baseweb="tab-list"]{
+        gap:6px;
+        padding:6px;
+        border-radius:17px;
+        background:rgba(255,255,255,.72);
+        backdrop-filter:blur(15px);
+        box-shadow:0 8px 20px rgba(5,49,88,.09);
+        position:sticky;
+        top:6px;
+        z-index:10;
+    }
+
+    .stTabs [data-baseweb="tab"]{
+        min-height:42px;
+        border-radius:12px;
+        font-weight:950;
+        color:#53728e;
+    }
+
+    .stTabs [aria-selected="true"]{
+        color:#0769ad!important;
+        background:#fff!important;
+        box-shadow:0 5px 13px rgba(5,49,88,.11);
+    }
+
+    div[data-testid="stExpander"]{
+        border:1px solid rgba(8,119,201,.12);
+        border-radius:18px;
+        background:rgba(255,255,255,.78);
+        box-shadow:0 8px 20px rgba(5,49,88,.07);
+    }
+
+
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"],
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"] p,
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"] span,
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"] li{
+        color:#17324d!important;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"] h1,
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"] h2,
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stMarkdownContainer"] h3{
+        color:#06284d!important;
+        text-shadow:none!important;
+        font-weight:950!important;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] .badge{
+        color:#0867aa!important;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] .badge-wait{
+        color:#ffffff!important;
+    }
+
+    div[data-testid="stVerticalBlockBorderWrapper"] .badge-gold{
+        color:#795600!important;
+    }
+
+
+    .park-switch-label{
+        color:#d7edff;
+        font-size:.72rem;
+        font-weight:900;
+        letter-spacing:.08em;
+        margin:2px 0 5px;
+    }
+
+    .bottom-nav-note{
+        margin-top:12px;
+        padding:10px 12px 88px;
+        color:#5e7890;
+        font-size:.72rem;
+        text-align:center;
+    }
+
+    .section-title{
+        margin:12px 0 8px;
+        color:#06284d;
+        font-size:1.28rem;
+        font-weight:950;
+    }
+
+    .category-summary{
+        padding:10px 12px;
+        border-radius:16px;
+        background:rgba(255,255,255,.82);
+        border:1px solid rgba(8,119,201,.12);
+        color:#31536e;
+        font-size:.78rem;
+        margin-bottom:10px;
+    }
+
+    /* Streamlitのradioをスマホ用タブとして見せる */
+    div[role="radiogroup"]{
+        display:flex;
+        gap:7px;
+        width:100%;
+    }
+
+    div[role="radiogroup"] label{
+        flex:1;
+        min-width:0;
+        justify-content:center;
+        border-radius:14px;
+        padding:8px 6px!important;
+        background:rgba(255,255,255,.82);
+        border:1px solid rgba(8,119,201,.14);
+        box-shadow:0 6px 14px rgba(5,49,88,.08);
+    }
+
+    div[role="radiogroup"] label:has(input:checked){
+        color:white!important;
+        background:linear-gradient(135deg,#0877c9,#00a9d6)!important;
+        border-color:transparent!important;
+        box-shadow:0 8px 18px rgba(8,119,201,.24);
+    }
+
+    div[role="radiogroup"] label p{
+        font-weight:950!important;
+        font-size:.78rem!important;
+        text-align:center;
+        white-space:nowrap;
+    }
+
+    .sticky-bottom-shell{
+        position:fixed;
+        left:0;
+        right:0;
+        bottom:0;
+        z-index:999;
+        padding:8px 8px calc(8px + env(safe-area-inset-bottom));
+        background:rgba(250,253,255,.94);
+        border-top:1px solid rgba(8,119,201,.12);
+        box-shadow:0 -8px 24px rgba(5,49,88,.13);
+        backdrop-filter:blur(16px);
+    }
+
+    @media(max-width:640px){
+        div[role="radiogroup"] label{
+            padding:7px 3px!important;
+        }
+        div[role="radiogroup"] label p{
+            font-size:.68rem!important;
+        }
+    }
+
+    @media(max-width:640px){
+        .hero{padding:20px 16px;border-radius:22px}
+        .hero h1{font-size:1.48rem}
+        .status-grid{gap:5px}
+        .status-card{padding:9px 7px}
+        .status-value{font-size:.69rem}
+        .block-container{padding-left:.55rem;padding-right:.55rem}
+    }
+    
+
+/* 施設カードのタイトルを必ず読みやすくする */
+div[data-testid="stVerticalBlockBorderWrapper"] h3,
+div[data-testid="stVerticalBlockBorderWrapper"] h3 *,
+div[data-testid="stVerticalBlockBorderWrapper"]
+[data-testid="stMarkdownContainer"] h3,
+div[data-testid="stVerticalBlockBorderWrapper"]
+[data-testid="stMarkdownContainer"] h3 * {
+    color: #06284d !important;
+    background: transparent !important;
+    opacity: 1 !important;
+    text-shadow: none !important;
+    -webkit-text-fill-color: #06284d !important;
+    font-weight: 950 !important;
+}
+
+/* カード内の文字全般 */
+div[data-testid="stVerticalBlockBorderWrapper"],
+div[data-testid="stVerticalBlockBorderWrapper"] p,
+div[data-testid="stVerticalBlockBorderWrapper"] span,
+div[data-testid="stVerticalBlockBorderWrapper"] div {
+    color: #17324d;
+}
+
+/* カード背景を白に固定 */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: #ffffff !important;
+}
+
+/* 待ち時間バッジだけ白文字 */
+div[data-testid="stVerticalBlockBorderWrapper"] .badge-wait {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+}
+
+
+.facility-title,
+.facility-title * {
+    color: #06284d !important;
+    -webkit-text-fill-color: #06284d !important;
+    font-size: 1.13rem !important;
+    line-height: 1.35 !important;
+    font-weight: 950 !important;
+    margin: .15rem 0 .25rem !important;
+}
