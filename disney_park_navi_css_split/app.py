@@ -1160,11 +1160,24 @@ def add_facility_marker(disney_map, row, favorites):
     marker_text = favorites.get(entity_id, type_icon)
 
     wait_value = row.get("wait_time")
-    wait_text = (
-        f"{int(wait_value)}分"
-        if pd.notna(wait_value)
-        else "待ち時間なし"
+    status_text = str(
+        row.get("状況", "情報なし")
     )
+    
+    if status_text == "休止中":
+        wait_text = "休止中"
+    
+    elif status_text == "一時休止":
+        wait_text = "一時休止"
+    
+    elif status_text == "受付終了":
+        wait_text = "受付終了"
+    
+    elif pd.notna(wait_value):
+        wait_text = f"{int(wait_value)}分"
+    
+    else:
+        wait_text = "待ち時間情報なし"
 
     display_name = row["name_ja"]
 
@@ -2059,11 +2072,27 @@ def show_facility_cards(frame, key_prefix):
                 ]
 
                 if row["type"] == "アトラクション":
-                    wait_text = (
-                        f"{int(row['wait_time'])}分待ち"
-                        if pd.notna(row["wait_time"])
-                        else "待ち時間情報なし"
+                    status_text = str(
+                        row.get("状況", "情報なし")
                     )
+                
+                    if status_text == "休止中":
+                        wait_text = "休止中"
+                
+                    elif status_text == "一時休止":
+                        wait_text = "一時休止"
+                
+                    elif status_text == "受付終了":
+                        wait_text = "受付終了"
+                
+                    elif pd.notna(row["wait_time"]):
+                        wait_text = f"{int(row['wait_time'])}分待ち"
+                
+                    else:
+                        wait_text = "待ち時間情報なし"
+                
+                    info_parts.append(wait_text)
+                    info_parts.append(status_text)
                     info_parts.append(wait_text)
                     info_parts.append(row.get("状況", "情報なし"))
 
