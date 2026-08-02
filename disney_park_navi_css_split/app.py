@@ -1484,7 +1484,7 @@ def lookup_official(row):
 
         if (
             target in candidate_name
-            of candidate_name in target
+            or candidate_name in target
         ):
             score = 0.95
         else:
