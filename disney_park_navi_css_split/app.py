@@ -6,6 +6,7 @@ import re
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
+from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import folium
@@ -15,6 +16,7 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from streamlit_folium import folium_static
 from streamlit_gps_location import gps_location_button
+from datetime import date, datetime
 
 
 
@@ -66,6 +68,8 @@ PARKS = {
                 "https://www.tokyodisneyresort.jp/tdl/shop/list.html",
             "ランドマーク":
                 "https://www.tokyodisneyresort.jp/tdl/",
+            "休止情報":
+                "https://www.tokyodisneyresort.jp/tdl/monthly/stop.html",
         },
     },
     "東京ディズニーシー": {
@@ -81,6 +85,8 @@ PARKS = {
                 "https://www.tokyodisneyresort.jp/tds/shop/list.html",
             "ランドマーク":
                 "https://www.tokyodisneyresort.jp/tds/",
+             "休止情報":
+                "https://www.tokyodisneyresort.jp/tdl/monthly/stop.html",
         },
     },
 }
@@ -232,6 +238,21 @@ def change_favorite_icon(entity_id, icon):
 # API取得
 # ------------------------------------------------------------------
 
+def parse_official_date(value):
+    """公式サイトの日付文字列をdateへ変換する。"""
+    value = str(value or "").strip()
+
+    if not value or value == "未定":
+        return None
+
+    try:
+        return datetime.strptime(
+            value,
+            "%Y/%m/%d",
+        ).date()
+    except ValueError:
+        return None
+
 @st.cache_data(ttl=3600)
 def get_attractions(park_id):
     """ThemeParks.wikiからアトラクションと座標を取る。"""
@@ -300,6 +321,79 @@ def get_live_data(park_id):
         )
 
     return rows
+@st.cache_data(ttl=3600)
+def get_official_suspensions(park_name):
+    """
+    東京ディズニーリゾート公式の休止情報ページから、
+    アトラクション名と休止期間を取得する。
+    """
+    url = PARKS[park_name]["official"]["休止情報"]
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 Version/17.0 "
+            "Mobile/15E148 Safari/604.1"
+        ),
+        "Accept-Language": "ja-JP,ja;q=0.9",
+    }
+
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return []
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser",
+    )
+
+    page_text = soup.get_text(
+        "\n",
+        strip=True,
+    )
+
+    # 例：
+    # ウエスタンリバー鉄道
+    # 2026/8/4 - 2026/8/24
+    pattern = re.compile(
+        r"([^\n]{2,80})\s*\n+"
+        r"(\d{4}/\d{1,2}/\d{1,2}|未定)"
+        r"\s*-\s*"
+        r"(\d{4}/\d{1,2}/\d{1,2}|未定)"
+    )
+
+    records = []
+
+    for match in pattern.finditer(page_text):
+        name = match.group(1).strip()
+        start_text = match.group(2).strip()
+        end_text = match.group(3).strip()
+
+        # 説明文などを誤って施設名にしない
+        if len(name) > 60:
+            continue
+
+        start_date = parse_official_date(start_text)
+        end_date = parse_official_date(end_text)
+
+        records.append(
+            {
+                "name": name,
+                "normalized": normalize_name(name),
+                "start_date": start_date,
+                "end_date": end_date,
+                "start_text": start_text,
+                "end_text": end_text,
+            }
+        )
+
+    return records
 
 
 def overpass_query(bbox):
@@ -726,7 +820,84 @@ def match_official_facility(park_name, facility_type, facility_name):
         **best,
         "score": score,
     }
+def get_suspension_info(
+    facility_name,
+    suspension_records,
+):
+    """施設名に一致する公式休止情報を返す。"""
+    target = normalize_name(facility_name)
 
+    best = None
+    best_score = 0.0
+
+    for record in suspension_records:
+        candidate = record["normalized"]
+
+        if not target or not candidate:
+            continue
+
+        if target == candidate:
+            score = 1.0
+        elif target in candidate or candidate in target:
+            score = 0.95
+        else:
+            score = SequenceMatcher(
+                None,
+                target,
+                candidate,
+            ).ratio()
+
+        if score > best_score:
+            best_score = score
+            best = record
+
+    if best_score < 0.86:
+        return None
+
+    return best
+
+
+def suspension_status(record):
+    """
+    公式休止期間から、
+    現在休止中・今後休止予定を判定する。
+    """
+    if not record:
+        return {
+            "is_suspended": False,
+            "is_upcoming": False,
+            "text": "",
+        }
+
+    today = date.today()
+    start_date = record["start_date"]
+    end_date = record["end_date"]
+
+    period_text = (
+        f"{record['start_text']}〜"
+        f"{record['end_text']}"
+    )
+
+    if start_date and today < start_date:
+        return {
+            "is_suspended": False,
+            "is_upcoming": True,
+            "text": f"休止予定：{period_text}",
+        }
+
+    if start_date and today >= start_date:
+        if end_date is None or today <= end_date:
+            return {
+                "is_suspended": True,
+                "is_upcoming": False,
+                "text": f"公式休止中：{period_text}",
+            }
+
+    return {
+        "is_suspended": False,
+        "is_upcoming": False,
+        "text": "",
+    }
 # ------------------------------------------------------------------
 # 計算・表示情報
 # ------------------------------------------------------------------
@@ -1267,6 +1438,9 @@ try:
         live_rows = get_live_data(
             PARKS[park_name]["id"]
         )
+        official_suspensions = get_official_suspensions(
+        park_name
+        )
 
         try:
             poi_rows = get_osm_pois(park_name)
@@ -1337,6 +1511,55 @@ attraction_df["状況"] = attraction_df["status"].map(
         str(value),
     )
 )
+
+attraction_df["suspension_info"] = (
+    attraction_df["name_ja"].map(
+        lambda name: get_suspension_info(
+            name,
+            official_suspensions,
+        )
+    )
+)
+
+attraction_df["suspension_status"] = (
+    attraction_df["suspension_info"].map(
+        suspension_status
+    )
+)
+
+attraction_df["official_stop_text"] = (
+    attraction_df["suspension_status"].map(
+        lambda value: value.get("text", "")
+    )
+)
+
+attraction_df["official_suspended"] = (
+    attraction_df["suspension_status"].map(
+        lambda value: bool(
+            value.get("is_suspended")
+        )
+    )
+)
+
+attraction_df["official_upcoming_stop"] = (
+    attraction_df["suspension_status"].map(
+        lambda value: bool(
+            value.get("is_upcoming")
+        )
+    )
+)
+
+# 現在が公式休止期間内なら、
+# ThemeParks.wikiより公式情報を優先する
+attraction_df.loc[
+    attraction_df["official_suspended"],
+    "status",
+] = "REFURBISHMENT"
+
+attraction_df.loc[
+    attraction_df["official_suspended"],
+    "状況",
+] = "休止中"
 
 # OSM施設と結合
 poi_df = pd.DataFrame(poi_rows)
@@ -1878,29 +2101,42 @@ def show_facility_cards(frame, key_prefix):
 
             # 施設固有情報
             if row["type"] == "アトラクション":
-                detail_parts = []
+    detail_parts = []
 
-                if pd.notna(row.get("queue_type")):
-                    detail_parts.append(
-                        f"{row.get('queue_icon', '☂️')} "
-                        f"待機列：{row['queue_type']}"
-                    )
+    if pd.notna(row.get("queue_type")):
+        detail_parts.append(
+            f"{row.get('queue_icon', '☂️')} "
+            f"待機列：{row['queue_type']}"
+        )
 
-                if pd.notna(row.get("thrill_level")):
-                    detail_parts.append(
-                        f"{row.get('thrill_icon', '🙂')} "
-                        f"{row['thrill_level']}"
-                    )
+    if pd.notna(row.get("thrill_level")):
+        detail_parts.append(
+            f"{row.get('thrill_icon', '🙂')} "
+            f"{row['thrill_level']}"
+        )
 
-                if row.get("cool_spot"):
-                    detail_parts.append("🧊 涼しい候補")
+    if row.get("cool_spot"):
+        detail_parts.append("🧊 涼しい候補")
 
-                if detail_parts:
-                    st.write("　".join(detail_parts))
+    if detail_parts:
+        st.write("　".join(detail_parts))
 
-            else:
-                details = poi_details(row)
+    official_stop_text = str(
+        row.get("official_stop_text") or ""
+    ).strip()
 
+    if official_stop_text:
+        if bool(row.get("official_suspended")):
+            st.error(
+                f"🚧 {official_stop_text}"
+            )
+        elif bool(row.get("official_upcoming_stop")):
+            st.warning(
+                f"📅 {official_stop_text}"
+            )
+
+else:
+    details = poi_details(row)
                 if row["type"] == "レストラン":
                     st.write(
                         f"🍴 形式：{details['style']}　"
