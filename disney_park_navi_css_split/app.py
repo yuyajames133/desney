@@ -528,8 +528,8 @@ def load_official_links():
         "official_url",
     }
 
-if not required_columns.issubset(df.columns):
-    return {}
+    if not required_columns.issubset(df.columns):
+        return {}
 
 links = {}
 
