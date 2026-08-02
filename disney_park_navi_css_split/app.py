@@ -2137,25 +2137,25 @@ def show_facility_cards(frame, key_prefix):
             
             else:
                 details = poi_details(row)
-                            if row["type"] == "レストラン":
-                                st.write(
-                                    f"🍴 形式：{details['style']}　"
-                                    f"料理：{details['cuisine']}"
-                                )
-                                st.write(
-                                    f"💴 価格：{details['price']}　"
-                                    f"🕒 営業時間：{details['opening_hours']}"
-                                )
-            
-                            elif row["type"] == "ショップ":
-                                shop_kind = (
-                                    (row.get("osm_tags") or {}).get("shop")
-                                    or "情報なし"
-                                )
-                                st.write(f"🛍️ ショップ種別：{shop_kind}")
-            
-                            if row.get("cool_spot"):
-                                st.write("🧊 涼しいスポット候補")
+                if row["type"] == "レストラン":
+                    st.write(
+                        f"🍴 形式：{details['style']}　"
+                        f"料理：{details['cuisine']}"
+                    )
+                    st.write(
+                        f"💴 価格：{details['price']}　"
+                        f"🕒 営業時間：{details['opening_hours']}"
+                    )
+
+                elif row["type"] == "ショップ":
+                    shop_kind = (
+                        (row.get("osm_tags") or {}).get("shop")
+                        or "情報なし"
+                    )
+                    st.write(f"🛍️ ショップ種別：{shop_kind}")
+
+                if row.get("cool_spot"):
+                    st.write("🧊 涼しいスポット候補")
 
             spot_payload = {
                 "entity_id": entity_id,
