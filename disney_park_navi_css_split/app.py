@@ -507,54 +507,40 @@ def normalize_name(value):
      
     return value
 
-@st.cache_date(ttl=60)
+@st.cache_data(ttl=60)
 def load_official_links():
-    """公式個別ページURLをCSVから読み込む。"""
     if not OFFICIAL_LINKS_FILE.exists():
-        return{}
-
-    try:
-        df = pd.read_csv(
-            OFFICIAL_LINKS_FILE,
-            dtype=str,
-        ).fillna("")
-    except (OSError, pd.errors.EmptyDataError):
         return {}
 
-    required_columns = {
-        "park",
-        "type",
-        "name_ja",
-        "official_url",
-    }
+    df = pd.read_csv(
+        OFFICIAL_LINKS_FILE,
+        dtype=str,
+    ).fillna("")
 
-    if not required_columns.issubset(df.columns):
-        return {}
+    links = {}
 
-links = {}
+    for _, row in df.iterrows():
+        park = row["park"].strip()
+        facility_type = row["type"].strip()
+        name = row["name_ja"].strip()
+        url = row["official_url"].strip()
 
-for _,row in df.iterrows():
-    park =row["park"].strip()
-    facility_type = row["type"].strip()
-    name = row["name_ja"].strip()
-    url = row["official_url"].strip()
+        if not park or not facility_type or not name or not url:
+            continue
 
-    if not park or not facility_type or not name or not url:
-        continue
+        key = (
+            park,
+            facility_type,
+            normalize_name(name),
+        )
 
-    key = (
-        park,
-        facility_type,
-        normalize_name(name),
-    )
+        links[key] = {
+            "name": name,
+            "normalized": normalize_name(name),
+            "url": url,
+        }
 
-    links[key] = {
-        "name": name,
-        "normalized": normalize_name(name),
-        "url": url,
-    }
-
-return links
+    return links
 
 
 def detail_pattern(park_name, facility_type):
