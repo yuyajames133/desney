@@ -545,7 +545,7 @@ for _,row in df.iterrows():
     key = (
         park,
         facility_type,
-        norimalize_name(name),
+        normalize_name(name),
     )
 
     links[key] = {
@@ -554,7 +554,7 @@ for _,row in df.iterrows():
         "url": url,
     }
 
-    return links
+return links
 
 
 def detail_pattern(park_name, facility_type):
