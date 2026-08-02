@@ -92,6 +92,7 @@ VALHALLA_API = "https://valhalla1.openstreetmap.de/route"
 NAME_FILE = BASE_DIR / "attraction_names.csv"
 FAVORITES_FILE = BASE_DIR / "favorites.csv"
 ICON_FILE = BASE_DIR / "icon_catalog.csv"
+OFFICIAL_LINKS_FILE = BASE_DIR / "official_links.csv"
 
 TYPE_ICONS = {
     "アトラクション": "🎡",
@@ -492,7 +493,68 @@ def normalize_name(value):
         "",
         value,
     )
+
+    value = value.replace("ウ", "ブ")
+    value = value.replace("･", "・")
+    value = value.replace("/", "・")
+
+    value = re.sub(
+        r"[\s　・･'\"“”‘’()（）\[\]【】"
+        r"\-‐-–—~〜!！?？:：,，.。]",
+        "",
+        value,
+    )
+     
     return value
+
+@st.cache_date(ttl=60)
+def load_official_links():
+    """公式個別ページURLをCSVから読み込む。"""
+    if not OFFICIAL_LINKS_FILE.exists():
+        return{}
+
+    try:
+        df = pd.read_csv(
+            OFFICIAL_LINKS_FILE,
+            dtype=str,
+        ).fillna("")
+    except (OSError, pd.errors.EmptyDataError):
+        return {}
+
+    required_columns = {
+        "park",
+        "type",
+        "name_ja",
+        "official_url",
+    }
+
+if not required_columns.issubset(df.columns):
+    return {}
+
+links = {}
+
+for _,row in df.iterrows():
+    park =row["park"].strip()
+    facility_type = row["type"].strip()
+    name = row["name_ja"].strip()
+    url = row["official_url"].strip()
+
+    if not park or not facility_type or not name or not url:
+        continue
+
+    key = (
+        park,
+        facility_type,
+        norimalize_name(name),
+    )
+
+    links[key] = {
+        "name": name,
+        "normalized": normalize_name(name),
+        "url": url,
+    }
+
+return links
 
 
 def detail_pattern(park_name, facility_type):
@@ -1374,24 +1436,12 @@ all_df = deduplicate_facilities(all_df)
 
 # 公式個別ページの有無を一度だけ計算してカードでも再利用
 official_lookup = {}
-
-for facility_type in [
-    "アトラクション",
-    "レストラン",
-    "ショップ",
-]:
-    for entry in get_official_facilities(
-        park_name,
-        facility_type,
-    ):
-        official_lookup[
-            (facility_type, entry["normalized"])
-        ] = entry
-
 manual_links = load_official_links()
 
 def lookup_official(row):
-    facility_type = row["type"]
+    """CSVから公式個別ページを探す。"""
+    facility_type = (row["type"])
+    target = normalize_name(row["name_ja"])
 
     if facility_type not in {
         "アトラクション",
@@ -1399,6 +1449,74 @@ def lookup_official(row):
         "ショップ",
     }:
         return None
+
+    #　完全一致
+    exact = manual_links.get(
+        (
+            park_name,
+            facility_type,
+            target,
+        )
+    )
+
+    if exact:
+        return exact
+
+    #　同じパーク・同じ種類の中から表記揺れを探す
+    candidates = [
+        data
+        for (csv_park, csv_type, _), data
+        in manual_links.items()
+        if (
+            csv_park == park_name
+            and csv_type == facility_type
+        )
+    ]
+
+    best = None
+    best_score = 0.0
+
+    for candidate in candidates:
+        candidate_name = candidate["normalized"]
+
+        if not candidate_name:
+            continue
+
+        if (
+            target in candidate_name
+            of candidate_name in target
+        ):
+            score = 0.95
+        else:
+            score = SequenceMatcher(
+                None,
+                target,
+                candidate_name,
+            ).ratio()
+
+        if best_score < 0.86:
+            return None
+
+        return best
+
+
+    all_df["has_official_detail"] = all_df[
+        "official_info"
+    ].map(bool)
+
+    # レストランショップは、
+    # 公式個別ページがあるパーク内施設だけ表示する
+    food_shop_mask = all_df["type"].isin(
+        [
+            "レストラン",
+            "ショップ",
+        ]
+    )
+
+    all_df = all_df[
+        (~food_shop_mask)
+        | all_df["has_official_detail"]
+    ].copy()
 
     target = normalize_name(row["name_ja"])
 
