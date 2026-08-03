@@ -2484,6 +2484,11 @@ def show_facility_cards(frame, key_prefix):
                     )
 
             spot_payload = {
+                "entity_id": entity_id,
+                "name_ja": row["name_ja"],
+                "lat": float(row["lat"]),
+                "lon": float(row["lon"]),
+            }
 
             action1, action2, action3 = st.columns(3)
 
