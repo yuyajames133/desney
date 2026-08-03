@@ -1,6 +1,5 @@
 import json
 import math
-import time
 import urllib.parse
 import re
 import unicodedata
@@ -16,7 +15,6 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from streamlit_folium import folium_static
 from streamlit_gps_location import gps_location_button
-from datetime import date, datetime
 
 
 
@@ -86,7 +84,7 @@ PARKS = {
             "ランドマーク":
                 "https://www.tokyodisneyresort.jp/tds/",
              "休止情報":
-                "https://www.tokyodisneyresort.jp/tdl/monthly/stop.html",
+                "https://www.tokyodisneyresort.jp/tds/monthly/stop.html",
         },
     },
 }
@@ -395,10 +393,11 @@ def get_official_suspensions(park_name):
 
     return records
 @st.cache_data(ttl=1800)
+@st.cache_data(ttl=21600)
 def get_official_restaurant_info(park_name):
     """
-    official_links.csvに登録された公式個別ページから、
-    店名・モバイルオーダー・優先案内を取得する。
+    official_links.csvの公式個別ページからサービス情報を取得する。
+    複数ページは並列取得し、結果は6時間キャッシュする。
     """
     if not OFFICIAL_LINKS_FILE.exists():
         return []
@@ -414,7 +413,6 @@ def get_official_restaurant_info(park_name):
         "name_ja",
         "official_url",
     }
-
     if not required_columns.issubset(link_df.columns):
         return []
 
@@ -433,17 +431,15 @@ def get_official_restaurant_info(park_name):
         "Accept-Language": "ja-JP,ja;q=0.9",
     }
 
-    records = []
-
-    for _, link_row in link_df.iterrows():
-        csv_name = link_row["name_ja"].strip()
-        detail_url = link_row["official_url"].strip()
+    def fetch_one(row):
+        csv_name = row["name_ja"].strip()
+        detail_url = row["official_url"].strip()
 
         try:
             response = requests.get(
                 detail_url,
                 headers=headers,
-                timeout=20,
+                timeout=10,
             )
             response.raise_for_status()
 
@@ -451,55 +447,56 @@ def get_official_restaurant_info(park_name):
                 response.text,
                 "html.parser",
             )
+            detail_text = soup.get_text(" ", strip=True)
 
-            heading = soup.find("h1")
-
-            if heading:
-                official_name = heading.get_text(
-                    " ",
-                    strip=True,
+            mobile_order = any(
+                marker in detail_text
+                for marker in (
+                    "ディズニー・モバイルオーダー対象",
+                    "ディズニー・モバイルオーダーについて",
                 )
-            else:
-                official_name = csv_name
-
-            detail_text = soup.get_text(
-                " ",
-                strip=True,
             )
-
-            mobile_order = (
-                "ディズニー・モバイルオーダー対象"
-                in detail_text
-                or
-                "ディズニー・モバイルオーダーについて"
-                in detail_text
+            priority_seating = any(
+                marker in detail_text
+                for marker in (
+                    "プライオリティ・シーティング対応",
+                    "プライオリティ・シーティング対象",
+                )
             )
-
-            priority_seating = (
-                "プライオリティ・シーティング対応"
-                in detail_text
-                or
-                "プライオリティ・シーティング対象"
-                in detail_text
-            )
+            page_loaded = True
 
         except requests.RequestException:
-            official_name = csv_name
             mobile_order = False
             priority_seating = False
-            detail_text = ""
+            page_loaded = False
 
-        records.append(
-            {
-                "name": official_name,
-                "normalized": normalize_name(csv_name),
-                "official_url": detail_url,
-                "opening_hours": [],
-                "mobile_order": mobile_order,
-                "priority_seating": priority_seating,
-                "page_loaded": bool(detail_text),
-            }
-        )
+        return {
+            "name": csv_name,
+            "normalized": normalize_name(csv_name),
+            "official_url": detail_url,
+            "opening_hours": [],
+            "mobile_order": mobile_order,
+            "priority_seating": priority_seating,
+            "page_loaded": page_loaded,
+        }
+
+    rows = [
+        row
+        for _, row in link_df.iterrows()
+    ]
+    if not rows:
+        return []
+
+    records = []
+    max_workers = min(8, len(rows))
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(fetch_one, row)
+            for row in rows
+        ]
+        for future in as_completed(futures):
+            records.append(future.result())
 
     return records
 
@@ -691,41 +688,6 @@ def deduplicate_facilities(frame):
 
 OFFICIAL_LINKS_FILE = BASE_DIR / "official_links.csv"
 
-@st.cache_data
-def load_official_links():
-    """
-    施設名と公式個別ページをCSVから読む。
-    自動取得に失敗しても、このCSVに追加すれば確実にリンクできる。
-    """
-    if not OFFICIAL_LINKS_FILE.exists():
-        return {}
-
-    df = pd.read_csv(OFFICIAL_LINKS_FILE, dtype=str).fillna("")
-    required = {"park", "type", "name_ja", "official_url"}
-
-    if not required.issubset(df.columns):
-        return {}
-
-    links = {}
-
-    for _, row in df.iterrows():
-        key = (
-            row["park"].strip(),
-            row["type"].strip(),
-            normalize_name(row["name_ja"]),
-        )
-        url = row["official_url"].strip()
-
-        if url:
-            links[key] = {
-                "name": row["name_ja"].strip(),
-                "normalized": normalize_name(row["name_ja"]),
-                "url": url,
-                "source": "csv",
-            }
-
-    return links
-
 
 # ------------------------------------------------------------------
 # 東京ディズニー公式の個別詳細ページ
@@ -787,189 +749,6 @@ def load_official_links():
     return links
 
 
-def detail_pattern(park_name, facility_type):
-    park_code = "tdl" if park_name == "東京ディズニーランド" else "tds"
-    section = {
-        "アトラクション": "attraction",
-        "レストラン": "restaurant",
-        "ショップ": "shop",
-    }.get(facility_type)
-
-    if not section:
-        return None
-
-    return re.compile(
-        rf"/{park_code}/{section}/detail/\d+/?$"
-    )
-
-
-@st.cache_data(ttl=21600)
-def get_official_facilities(park_name, facility_type):
-    """
-    公式一覧から detail/数字/ のURLを抽出し、
-    各個別ページを開いて正式な施設名を取得する。
-    """
-    list_url = PARKS[park_name]["official"].get(facility_type)
-    pattern = detail_pattern(park_name, facility_type)
-
-    if not list_url or not pattern:
-        return []
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-            "AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1"
-        ),
-        "Accept-Language": "ja-JP,ja;q=0.9",
-    }
-
-    try:
-        response = requests.get(
-            list_url,
-            headers=headers,
-            timeout=30,
-        )
-        response.raise_for_status()
-    except requests.RequestException:
-        return []
-
-    soup = BeautifulSoup(response.text, "html.parser")
-    base_host = urllib.parse.urlparse(list_url).netloc
-    detail_urls = set()
-
-    for anchor in soup.find_all("a", href=True):
-        absolute_url = urllib.parse.urljoin(
-            list_url,
-            anchor.get("href", "").strip(),
-        )
-        parsed = urllib.parse.urlparse(absolute_url)
-
-        if (
-            parsed.netloc == base_host
-            and pattern.search(parsed.path)
-        ):
-            detail_urls.add(absolute_url)
-
-    def fetch_detail(detail_url):
-        try:
-            detail_response = requests.get(
-                detail_url,
-                headers=headers,
-                timeout=20,
-            )
-            detail_response.raise_for_status()
-        except requests.RequestException:
-            return None
-
-        detail_soup = BeautifulSoup(
-            detail_response.text,
-            "html.parser",
-        )
-
-        candidates = []
-
-        for selector in [
-            "h1",
-            "main h2",
-            'meta[property="og:title"]',
-            'meta[name="twitter:title"]',
-            "title",
-        ]:
-            for node in detail_soup.select(selector):
-                if node.name == "meta":
-                    text = node.get("content", "")
-                else:
-                    text = node.get_text(" ", strip=True)
-
-                text = re.sub(
-                    r"^【公式】|[｜|]\s*東京ディズニー.*$",
-                    "",
-                    str(text),
-                ).strip()
-
-                if 2 <= len(text) <= 100:
-                    candidates.append(text)
-
-        if not candidates:
-            return None
-
-        # h1があれば先頭になるので、最初の日本語候補を優先
-        name = next(
-            (
-                item
-                for item in candidates
-                if contains_japanese(item)
-            ),
-            candidates[0],
-        )
-
-        return {
-            "name": name,
-            "normalized": normalize_name(name),
-            "url": detail_url,
-        }
-
-    records = []
-
-    # 詳細ページを並列取得して待ち時間を抑える
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {
-            executor.submit(fetch_detail, url): url
-            for url in detail_urls
-        }
-
-        for future in as_completed(futures):
-            record = future.result()
-            if (
-                record
-                and record["normalized"]
-            ):
-                records.append(record)
-
-    return records
-
-
-def official_match_score(target, candidate):
-    """完全一致・包含・類似度を組み合わせて採点する。"""
-    if not target or not candidate:
-        return 0.0
-    if target == candidate:
-        return 1.0
-    if target in candidate or candidate in target:
-        shorter = min(len(target), len(candidate))
-        longer = max(len(target), len(candidate))
-        return 0.88 + 0.1 * (shorter / longer)
-    return SequenceMatcher(None, target, candidate).ratio()
-
-
-def match_official_facility(park_name, facility_type, facility_name):
-    """
-    個別詳細ページが高い確度で一致した場合だけURLを返す。
-    一覧ページへのフォールバックはしない。
-    """
-    entries = get_official_facilities(park_name, facility_type)
-    target = normalize_name(facility_name)
-
-    if not target or not entries:
-        return None
-
-    scored = [
-        (
-            official_match_score(target, entry["normalized"]),
-            entry,
-        )
-        for entry in entries
-    ]
-    score, best = max(scored, key=lambda item: item[0])
-
-    # 誤リンク防止。個別ページを特定できないときはボタンを出さない。
-    if score < 0.80:
-        return None
-
-    return {
-        **best,
-        "score": score,
-    }
 def get_suspension_info(
     facility_name,
     suspension_records,
@@ -1810,12 +1589,11 @@ all_df = all_df[
 all_df = deduplicate_facilities(all_df)
 
 # 公式個別ページの有無を一度だけ計算してカードでも再利用
-official_lookup = {}
 manual_links = load_official_links()
 
 def lookup_official(row):
     """CSVから公式個別ページを探す。"""
-    facility_type = (row["type"])
+    facility_type = row["type"]
     target = normalize_name(row["name_ja"])
 
     if facility_type not in {
@@ -1825,19 +1603,12 @@ def lookup_official(row):
     }:
         return None
 
-    #　完全一致
     exact = manual_links.get(
-        (
-            park_name,
-            facility_type,
-            target,
-        )
+        (park_name, facility_type, target)
     )
-
     if exact:
         return exact
 
-    #　同じパーク・同じ種類の中から表記揺れを探す
     candidates = [
         data
         for (csv_park, csv_type, _), data
@@ -1853,14 +1624,12 @@ def lookup_official(row):
 
     for candidate in candidates:
         candidate_name = candidate["normalized"]
-
         if not candidate_name:
             continue
 
-        if (
-            target in candidate_name
-            or candidate_name in target
-        ):
+        if target == candidate_name:
+            score = 1.0
+        elif target in candidate_name or candidate_name in target:
             score = 0.95
         else:
             score = SequenceMatcher(
@@ -1869,67 +1638,11 @@ def lookup_official(row):
                 candidate_name,
             ).ratio()
 
-        if best_score < 0.86:
-            return None
+        if score > best_score:
+            best_score = score
+            best = candidate
 
-        return best
-
-
-    all_df["has_official_detail"] = all_df[
-        "official_info"
-    ].map(bool)
-
-    # レストランショップは、
-    # 公式個別ページがあるパーク内施設だけ表示する
-    food_shop_mask = all_df["type"].isin(
-        [
-            "レストラン",
-            "ショップ",
-        ]
-    )
-
-    all_df = all_df[
-        (~food_shop_mask)
-        | all_df["has_official_detail"]
-    ].copy()
-
-    target = normalize_name(row["name_ja"])
-
-    manual = manual_links.get(
-        (park_name, facility_type, target)
-    )
-    if manual:
-        return manual
-
-    exact = official_lookup.get(
-        (facility_type, target)
-    )
-
-    if exact:
-        return exact
-
-    entries = [
-        entry
-        for (entry_type, _), entry
-        in official_lookup.items()
-        if entry_type == facility_type
-    ]
-
-    if not entries:
-        return None
-
-    score, best = max(
-        (
-            official_match_score(
-                target,
-                entry["normalized"],
-            ),
-            entry,
-        )
-        for entry in entries
-    )
-
-    return best if score >= 0.84 else None
+    return best if best_score >= 0.86 else None
 
 all_df["official_info"] = all_df.apply(
     lookup_official,
@@ -2288,8 +2001,6 @@ def show_facility_cards(frame, key_prefix):
                 
                     info_parts.append(wait_text)
                     info_parts.append(status_text)
-                    info_parts.append(wait_text)
-                    info_parts.append(row.get("状況", "情報なし"))
 
                 wait_badge = ""
                 if row["type"] == "アトラクション":
