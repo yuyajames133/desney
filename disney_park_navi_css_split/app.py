@@ -419,7 +419,7 @@ def get_attractions(park_id):
 
 @st.cache_data(ttl=300)
 def get_live_data(park_id):
-    """ThemeParks.wikiから営業状況と待ち時間を取る。"""
+    """ThemeParks.wikiから営業状況・待ち時間・パス情報を取る。"""
     response = requests.get(
         f"{THEMEPARKS_API}/{park_id}/live",
         timeout=20,
@@ -430,9 +430,20 @@ def get_live_data(park_id):
 
     for item in response.json().get("liveData", []):
         queue = item.get("queue") or {}
+
         standby = (
             queue.get("STANDBY")
             or queue.get("standby")
+            or {}
+        )
+        free_pass = (
+            queue.get("RETURN_TIME")
+            or queue.get("returnTime")
+            or {}
+        )
+        paid_pass = (
+            queue.get("PAID_RETURN_TIME")
+            or queue.get("paidReturnTime")
             or {}
         )
 
@@ -443,6 +454,38 @@ def get_live_data(park_id):
                 ),
                 "status": item.get("status", "UNKNOWN"),
                 "wait_time": standby.get("waitTime"),
+                "free_pass_available": bool(free_pass),
+                "free_pass_state": (
+                    free_pass.get("state")
+                    or free_pass.get("status")
+                    or ""
+                ),
+                "free_pass_start": (
+                    free_pass.get("returnStart")
+                    or free_pass.get("startTime")
+                    or ""
+                ),
+                "free_pass_end": (
+                    free_pass.get("returnEnd")
+                    or free_pass.get("endTime")
+                    or ""
+                ),
+                "paid_pass_available": bool(paid_pass),
+                "paid_pass_state": (
+                    paid_pass.get("state")
+                    or paid_pass.get("status")
+                    or ""
+                ),
+                "paid_pass_start": (
+                    paid_pass.get("returnStart")
+                    or paid_pass.get("startTime")
+                    or ""
+                ),
+                "paid_pass_end": (
+                    paid_pass.get("returnEnd")
+                    or paid_pass.get("endTime")
+                    or ""
+                ),
             }
         )
 
@@ -624,14 +667,6 @@ def overpass_query(bbox):
           ({south},{west},{north},{east});
       nwr["shop"]
           ({south},{west},{north},{east});
-      nwr["tourism"="attraction"]
-          ({south},{west},{north},{east});
-      nwr["building"="castle"]
-          ({south},{west},{north},{east});
-      nwr["man_made"~"tower|lighthouse"]
-          ({south},{west},{north},{east});
-      nwr["historic"]
-          ({south},{west},{north},{east});
     );
     out center tags;
     """
@@ -688,7 +723,7 @@ def get_osm_pois(park_name):
         elif shop:
             poi_type = "ショップ"
         else:
-            poi_type = "ランドマーク"
+            continue
 
         osm_id = f"osm:{element.get('type')}:{element.get('id')}"
 
@@ -1567,8 +1602,8 @@ category_page = st.radio(
         "🎢 アトラクション",
         "🍽 レストラン",
         "🛍 ショップ",
+        "⭐ 行きたい",
         "🗺 マップ",
-        "••• その他",
     ],
     horizontal=True,
     label_visibility="collapsed",
@@ -1579,33 +1614,46 @@ category_to_types = {
     "🎢 アトラクション": ["アトラクション"],
     "🍽 レストラン": ["レストラン"],
     "🛍 ショップ": ["ショップ"],
+    "⭐ 行きたい": [
+        "アトラクション",
+        "レストラン",
+        "ショップ",
+    ],
     "🗺 マップ": [
         "アトラクション",
         "レストラン",
         "ショップ",
-        "ランドマーク",
-    ],
-    "••• その他": [
-        "アトラクション",
-        "レストラン",
-        "ショップ",
-        "ランドマーク",
     ],
 }
 
 facility_types = category_to_types[category_page]
 
-attraction_search = ""
+category_search = ""
 selected_area = "すべて"
+cool_only = False
+avoid_thrill = False
+japanese_only = True
+official_only = False
 
-if category_page == "🎢 アトラクション":
-    attraction_search = st.text_input(
-        "アトラクション検索",
-        placeholder="アトラクション名を検索",
+if category_page in {
+    "🎢 アトラクション",
+    "🍽 レストラン",
+    "🛍 ショップ",
+}:
+    placeholders = {
+        "🎢 アトラクション": "アトラクション名を検索",
+        "🍽 レストラン": "レストラン名・料理を検索",
+        "🛍 ショップ": "ショップ名を検索",
+    }
+
+    category_search = st.text_input(
+        "施設検索",
+        placeholder=placeholders[category_page],
         label_visibility="collapsed",
-        key=f"attraction_search_{park_name}",
+        key=f"category_search_{park_name}_{category_page}",
     )
 
+if category_page == "🎢 アトラクション":
     area_options = [
         "すべて",
         *ATTRACTION_AREAS.get(park_name, {}).keys(),
@@ -1617,6 +1665,22 @@ if category_page == "🎢 アトラクション":
         key=f"attraction_area_{park_name}",
     )
 
+    filter_col1, filter_col2 = st.columns(2)
+
+    with filter_col1:
+        cool_only = st.checkbox(
+            "🧊 屋内・屋根あり",
+            value=False,
+            key=f"cool_{park_name}",
+        )
+
+    with filter_col2:
+        avoid_thrill = st.checkbox(
+            "😱 絶叫強めを除外",
+            value=False,
+            key=f"thrill_{park_name}",
+        )
+
 
 sort_mode = st.selectbox(
     "並べ替え",
@@ -1626,46 +1690,6 @@ sort_mode = st.selectbox(
         "距離＋待ち時間のバランス順",
     ],
 )
-
-cool_only = False
-avoid_thrill = False
-japanese_only = True
-official_only = False
-
-if category_page == "••• その他":
-    with st.expander("絞り込み・並べ替え設定", expanded=True):
-        filter_col1, filter_col2 = st.columns(2)
-
-        with filter_col1:
-            cool_only = st.checkbox(
-                "🧊 涼しいスポット候補",
-                value=False,
-            )
-
-        with filter_col2:
-            avoid_thrill = st.checkbox(
-                "😱 絶叫強めを除外",
-                value=False,
-            )
-
-        clean_col1, clean_col2 = st.columns(2)
-
-        with clean_col1:
-            japanese_only = st.checkbox(
-                "🇯🇵 日本語名の施設だけ",
-                value=True,
-                help="英語名しか登録されていない施設を一覧から除外します。",
-            )
-
-        with clean_col2:
-            official_only = st.checkbox(
-                "🏰 公式詳細がある施設だけ",
-                value=True,
-                help=(
-                    "東京ディズニー公式の個別詳細ページを"
-                    "確認できた施設だけ表示します。"
-                ),
-            )
 
 
 search_word = ""
@@ -1766,6 +1790,14 @@ if not live_df.empty:
 else:
     attraction_df["status"] = "UNKNOWN"
     attraction_df["wait_time"] = pd.NA
+    attraction_df["free_pass_available"] = False
+    attraction_df["free_pass_state"] = ""
+    attraction_df["free_pass_start"] = ""
+    attraction_df["free_pass_end"] = ""
+    attraction_df["paid_pass_available"] = False
+    attraction_df["paid_pass_state"] = ""
+    attraction_df["paid_pass_start"] = ""
+    attraction_df["paid_pass_end"] = ""
 
 attraction_df["status"] = (
     attraction_df["status"]
@@ -2014,22 +2046,49 @@ display_df = all_df[
     all_df["type"].isin(facility_types)
 ].copy()
 
-if category_page == "🎢 アトラクション":
-    if attraction_search.strip():
-        display_df = display_df[
-            display_df["name_ja"]
-            .astype(str)
-            .str.contains(
-                attraction_search.strip(),
-                case=False,
-                na=False,
-            )
-        ]
+if category_page in {
+    "🎢 アトラクション",
+    "🍽 レストラン",
+    "🛍 ショップ",
+} and category_search.strip():
+    query = category_search.strip()
 
-    if selected_area != "すべて":
-        display_df = display_df[
-            display_df["area"] == selected_area
-        ]
+    def category_search_text(row):
+        details = poi_details(row)
+        tags = row.get("osm_tags") or {}
+
+        return " ".join(
+            str(value)
+            for value in [
+                row.get("name_ja", ""),
+                row.get("name_en", ""),
+                row.get("type", ""),
+                row.get("area", ""),
+                details.get("cuisine", ""),
+                details.get("style", ""),
+                tags.get("shop", ""),
+            ]
+        )
+
+    display_df["_category_search"] = display_df.apply(
+        category_search_text,
+        axis=1,
+    )
+    display_df = display_df[
+        display_df["_category_search"].str.contains(
+            query,
+            case=False,
+            na=False,
+        )
+    ]
+
+if (
+    category_page == "🎢 アトラクション"
+    and selected_area != "すべて"
+):
+    display_df = display_df[
+        display_df["area"] == selected_area
+    ]
 
 if cool_only:
     display_df = display_df[
@@ -2094,8 +2153,8 @@ category_titles = {
     "🎢 アトラクション": "🎢 アトラクション",
     "🍽 レストラン": "🍽 レストラン",
     "🛍 ショップ": "🛍 ショップ",
+    "⭐ 行きたい": "⭐ 行きたい",
     "🗺 マップ": "🗺 パークマップ",
-    "••• その他": "••• その他・検索・行きたい",
 }
 
 st.markdown(
@@ -2415,6 +2474,21 @@ def show_facility_cards(frame, key_prefix):
             
                 if detail_parts:
                     st.write("　".join(detail_parts))
+
+                pass_parts = []
+
+                if bool(row.get("free_pass_available")):
+                    pass_parts.append(
+                        "🆓 無料パス情報あり"
+                    )
+
+                if bool(row.get("paid_pass_available")):
+                    pass_parts.append(
+                        "💳 有料パス情報あり"
+                    )
+
+                if pass_parts:
+                    st.info("　".join(pass_parts))
             
                 official_stop_text = str(
                     row.get("official_stop_text") or ""
@@ -2596,159 +2670,47 @@ if category_page in {
         )
 
 
-if category_page == "••• その他":
-    search_section, favorite_section, landmark_section = st.tabs(
-        [
-            "🔎 検索",
-            f"⭐ 行きたい（{len(favorites)}）",
-            "📍 ランドマーク",
-        ]
+if category_page == "⭐ 行きたい":
+    favorite_df = all_df[
+        all_df["entity_id"]
+        .astype(str)
+        .isin(favorites.keys())
+    ].copy()
+
+    favorite_search = st.text_input(
+        "行きたい場所を検索",
+        placeholder="お気に入りの施設名を検索",
+        label_visibility="collapsed",
+        key=f"favorite_search_{park_name}",
     )
 
-    with search_section:
-        st.markdown("### 🔎 行きたい場所を検索")
-
-        query = st.text_input(
-            "検索",
-            placeholder="施設名・料理・ジャンルを入力",
-            label_visibility="collapsed",
-            key="facility_search",
-        )
-
-        target_types = st.multiselect(
-            "検索対象",
-            [
-                "アトラクション",
-                "レストラン",
-                "ショップ",
-                "ランドマーク",
-            ],
-            default=[
-                "アトラクション",
-                "レストラン",
-                "ショップ",
-                "ランドマーク",
-            ],
-            key="search_types",
-        )
-
-        result_df = all_df[
-            all_df["type"].isin(target_types)
-        ].copy()
-
-        if query.strip():
-            def build_search_text(row):
-                details = poi_details(row)
-                tags = row.get("osm_tags") or {}
-                return " ".join(
-                    str(value)
-                    for value in [
-                        row.get("name_ja", ""),
-                        row.get("name_en", ""),
-                        row.get("type", ""),
-                        row.get("queue_type", ""),
-                        row.get("thrill_level", ""),
-                        details.get("cuisine", ""),
-                        details.get("style", ""),
-                        tags.get("shop", ""),
-                        "涼しい" if row.get("cool_spot") else "",
-                    ]
-                )
-
-            result_df["_search"] = result_df.apply(
-                build_search_text,
-                axis=1,
+    if favorite_search.strip():
+        favorite_df = favorite_df[
+            favorite_df["name_ja"]
+            .astype(str)
+            .str.contains(
+                favorite_search.strip(),
+                case=False,
+                na=False,
             )
-            result_df = result_df[
-                result_df["_search"].str.contains(
-                    query.strip(),
-                    case=False,
-                    na=False,
-                )
-            ]
+        ]
 
-        if japanese_only:
-            result_df = result_df[
-                result_df["has_japanese_name"]
-            ]
-
-        if official_only:
-            result_df = result_df[
-                result_df["has_official_detail"]
-            ]
-
-        result_df = deduplicate_facilities(
-            result_df
+    if favorite_df.empty:
+        st.info(
+            "このパークには、まだ行きたい場所がありません。"
+        )
+    else:
+        favorite_df = deduplicate_facilities(
+            favorite_df
         ).sort_values(
             ["distance_m", "wait_time"],
             na_position="last",
         ).reset_index(drop=True)
 
-        if not query.strip():
-            st.info("施設名、カレー、カフェ、城、涼しい、などで検索できます。")
-        elif result_df.empty:
-            st.warning("該当する施設が見つかりませんでした。")
-        else:
-            show_facility_cards(
-                result_df,
-                key_prefix="search",
-            )
-
-
-    with favorite_section:
-        favorite_df = all_df[
-            all_df["entity_id"]
-            .astype(str)
-            .isin(favorites.keys())
-        ].copy()
-
-        if favorite_df.empty:
-            st.info("まだお気に入りがありません。")
-
-        else:
-            favorite_df["distance_m"] = favorite_df.apply(
-                lambda row: round(
-                    distance_m(
-                        location["latitude"],
-                        location["longitude"],
-                        row["lat"],
-                        row["lon"],
-                    )
-                ),
-                axis=1,
-            )
-
-            favorite_df["official_url"] = favorite_df["type"].map(
-                lambda facility_type:
-                    official_url(park_name, facility_type)
-            )
-
-            favorite_df = deduplicate_facilities(
-                favorite_df
-            ).sort_values("distance_m")
-
-            show_facility_cards(
-                favorite_df.reset_index(drop=True),
-                key_prefix="favorite",
-            )
-
-
-    with landmark_section:
-            landmark_df = all_df[
-                all_df["type"] == "ランドマーク"
-            ].copy()
-
-            landmark_df = landmark_df.sort_values(
-                "distance_m"
-            ).head(50).reset_index(drop=True)
-
-            if landmark_df.empty:
-                st.info("ランドマーク情報がありません。")
-            else:
-                show_facility_cards(
-                    landmark_df,
-                    key_prefix="landmark",
-                )
+        show_facility_cards(
+            favorite_df,
+            key_prefix="favorite",
+        )
 
 
 if category_page == "🗺 マップ":
