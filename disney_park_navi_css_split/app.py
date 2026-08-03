@@ -2417,70 +2417,73 @@ def show_facility_cards(frame, key_prefix):
                             f"📅 {official_stop_text}"
                         )
             
-            else:
+                        else:
                 details = poi_details(row)
-            if row["type"] == "レストラン":
-                st.write(
-                    f"🍴 形式：{details['style']}　"
-                    f"料理：{details['cuisine']}"
-                )
-            
-                restaurant_hours = row.get(
-                    "restaurant_hours",
-                    [],
-                )
-            
-                if isinstance(restaurant_hours, list) and restaurant_hours:
-                    hours_text = "／".join(
-                        restaurant_hours[:3]
-                    )
-            
+
+                if row["type"] == "レストラン":
                     st.write(
-                        f"🕒 公式営業時間：{hours_text}"
+                        f"🍴 形式：{details['style']}　"
+                        f"料理：{details['cuisine']}"
                     )
-                else:
-                    st.write(
-                        "🕒 公式営業時間：情報なし"
+
+                    restaurant_hours = row.get(
+                        "restaurant_hours",
+                        [],
                     )
-            
-                service_parts = []
-            
-                if bool(row.get("mobile_order")):
-                    service_parts.append(
-                        "📱 モバイルオーダー対象"
-                    )
-            
-                if bool(row.get("priority_seating")):
-                    service_parts.append(
-                        "🪑 優先案内対象"
-                    )
-            
-                if service_parts:
-                    st.success(
-                        "　".join(service_parts)
-                    )
-            
-                else:
-                    st.caption(
-                        "モバイルオーダー・優先案内の公式表示なし"
-                    )
+
+                    if (
+                        isinstance(restaurant_hours, list)
+                        and restaurant_hours
+                    ):
+                        hours_text = "／".join(
+                            restaurant_hours[:3]
+                        )
+
+                        st.write(
+                            f"🕒 公式営業時間：{hours_text}"
+                        )
+                    else:
+                        st.write(
+                            "🕒 公式営業時間：情報なし"
+                        )
+
+                    service_parts = []
+
+                    if bool(row.get("mobile_order")):
+                        service_parts.append(
+                            "📱 モバイルオーダー対象"
+                        )
+
+                    if bool(row.get("priority_seating")):
+                        service_parts.append(
+                            "🪑 プライオリティ・シーティング対象"
+                        )
+
+                    if service_parts:
+                        st.success(
+                            "　".join(service_parts)
+                        )
+                    else:
+                        st.caption(
+                            "モバイルオーダー・優先案内の公式表示なし"
+                        )
 
                 elif row["type"] == "ショップ":
                     shop_kind = (
                         (row.get("osm_tags") or {}).get("shop")
                         or "情報なし"
                     )
-                    st.write(f"🛍️ ショップ種別：{shop_kind}")
+
+                    st.write(
+                        f"🛍️ ショップ種別：{shop_kind}"
+                    )
 
                 if row.get("cool_spot"):
-                    st.write("🧊 涼しいスポット候補")
+                    st.write(
+                        "🧊 涼しいスポット候補"
+                    )
 
             spot_payload = {
-                "entity_id": entity_id,
-                "name_ja": row["name_ja"],
-                "lat": float(row["lat"]),
-                "lon": float(row["lon"]),
-            }
 
             action1, action2, action3 = st.columns(3)
 
