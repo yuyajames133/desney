@@ -2417,7 +2417,7 @@ def show_facility_cards(frame, key_prefix):
                             f"📅 {official_stop_text}"
                         )
             
-                        else:
+            else:
                 details = poi_details(row)
 
                 if row["type"] == "レストラン":
