@@ -12,6 +12,7 @@ import folium
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 from streamlit_folium import folium_static
 from streamlit_gps_location import gps_location_button
@@ -118,6 +119,133 @@ STATUS_JA = {
     "REFURBISHMENT": "休止中",
     "UNKNOWN": "情報なし",
 }
+
+
+# ThemeParks.wikiの東京ディズニー情報では、各アトラクションの
+# 所属エリアが安定して返らないため、公式パーク区分に合わせて保持する。
+ATTRACTION_AREAS = {
+    "東京ディズニーランド": {
+        "ワールドバザール": {
+            "オムニバス",
+            "ペニーアーケード",
+        },
+        "アドベンチャーランド": {
+            "カリブの海賊",
+            "ジャングルクルーズ：ワイルドライフ・エクスペディション",
+            "スイスファミリー・ツリーハウス",
+            "魅惑のチキルーム：スティッチ・プレゼンツ“アロハ・エ・コモ・マイ！”",
+        },
+        "ウエスタンランド": {
+            "ウエスタンランド・シューティングギャラリー",
+            "ウエスタンランド・シューティングギャラリー",
+            "ウエスタンリバー鉄道",
+            "カントリーベア・シアター",
+            "蒸気船マークトウェイン号",
+            "トムソーヤ島いかだ",
+            "ビッグサンダー・マウンテン",
+        },
+        "クリッターカントリー": {
+            "スプラッシュ・マウンテン",
+            "ビーバーブラザーズのカヌー探険",
+        },
+        "ファンタジーランド": {
+            "アリスのティーパーティー",
+            "イッツ・ア・スモールワールド",
+            "キャッスルカルーセル",
+            "シンデレラのフェアリーテイル・ホール",
+            "白雪姫と七人のこびと",
+            "空飛ぶダンボ",
+            "ピノキオの冒険旅行",
+            "ピーターパン空の旅",
+            "プーさんのハニーハント",
+            "ホーンテッドマンション",
+            "ミッキーのフィルハーマジック",
+            "美女と野獣“魔法のものがたり”",
+        },
+        "トゥーンタウン": {
+            "ガジェットのゴーコースター",
+            "グーフィーのペイント＆プレイハウス",
+            "チップとデールのツリーハウス",
+            "トゥーンパーク",
+            "ドナルドのボート",
+            "ミニーの家",
+            "ロジャーラビットのカートゥーンスピン",
+        },
+        "トゥモローランド": {
+            "スター・ツアーズ：ザ・アドベンチャーズ・コンティニュー",
+            "スティッチ・エンカウンター",
+            "ベイマックスのハッピーライド",
+            "モンスターズ・インク“ライド＆ゴーシーク！”",
+        },
+    },
+    "東京ディズニーシー": {
+        "メディテレーニアンハーバー": {
+            "ソアリン：ファンタスティック・フライト",
+            "ヴェネツィアン・ゴンドラ",
+            "フォートレス・エクスプロレーション",
+            "フォートレス・エクスプロレーション“ザ・レオナルドチャレンジ”",
+            "ディズニーシー・トランジットスチーマーライン（メディテレーニアンハーバー）",
+        },
+        "アメリカンウォーターフロント": {
+            "タワー・オブ・テラー",
+            "タートル・トーク",
+            "トイ・ストーリー・マニア！",
+            "ビッグシティ・ヴィークル",
+            "ディズニーシー・エレクトリックレールウェイ（アメリカンウォーターフロント）",
+            "ディズニーシー・トランジットスチーマーライン（アメリカンウォーターフロント）",
+        },
+        "ポートディスカバリー": {
+            "アクアトピア",
+            "ニモ＆フレンズ・シーライダー",
+            "ディズニーシー・エレクトリックレールウェイ（ポートディスカバリー）",
+        },
+        "ロストリバーデルタ": {
+            "インディ・ジョーンズ・アドベンチャー：クリスタルスカルの魔宮",
+            "レイジングスピリッツ",
+            "ディズニーシー・トランジットスチーマーライン（ロストリバーデルタ）",
+        },
+        "アラビアンコースト": {
+            "キャラバンカルーセル",
+            "シンドバッド・ストーリーブック・ヴォヤッジ",
+            "ジャスミンのフライングカーペット",
+            "マジックランプシアター",
+        },
+        "マーメイドラグーン": {
+            "アリエルのプレイグラウンド",
+            "ジャンピン・ジェリーフィッシュ",
+            "スカットルのスクーター",
+            "フランダーのフライングフィッシュコースター",
+            "ブローフィッシュ・バルーンレース",
+            "マーメイドラグーンシアター",
+            "ワールプール",
+        },
+        "ミステリアスアイランド": {
+            "センター・オブ・ジ・アース",
+            "海底2万マイル",
+        },
+        "ファンタジースプリングス": {
+            "アナとエルサのフローズンジャーニー",
+            "ピーターパンのネバーランドアドベンチャー",
+            "フェアリー・ティンカーベルのビジーバギー",
+            "ラプンツェルのランタンフェスティバル",
+        },
+    },
+}
+
+
+def attraction_area(park_name, attraction_name):
+    """アトラクション名から所属エリアを返す。"""
+    target = normalize_name(attraction_name)
+
+    for area_name, names in ATTRACTION_AREAS.get(
+        park_name,
+        {},
+    ).items():
+        for name in names:
+            if normalize_name(name) == target:
+                return area_name
+
+    return "エリア未設定"
 
 
 # ------------------------------------------------------------------
@@ -392,114 +520,53 @@ def get_official_suspensions(park_name):
         )
 
     return records
-@st.cache_data(ttl=1800)
-@st.cache_data(ttl=21600)
+@st.cache_data
 def get_official_restaurant_info(park_name):
     """
-    official_links.csvの公式個別ページからサービス情報を取得する。
-    複数ページは並列取得し、結果は6時間キャッシュする。
+    official_links.csvの既存列だけから、
+    レストラン名と公式URLを読み込む。
+    外部ページ巡回や未存在のCSV列には依存しない。
     """
     if not OFFICIAL_LINKS_FILE.exists():
         return []
 
-    link_df = pd.read_csv(
+    df = pd.read_csv(
         OFFICIAL_LINKS_FILE,
         dtype=str,
     ).fillna("")
 
-    required_columns = {
+    required = {
         "park",
         "type",
         "name_ja",
         "official_url",
     }
-    if not required_columns.issubset(link_df.columns):
+    if not required.issubset(df.columns):
         return []
 
-    link_df = link_df[
-        (link_df["park"].str.strip() == park_name)
-        & (link_df["type"].str.strip() == "レストラン")
-        & (link_df["official_url"].str.strip() != "")
+    df = df[
+        (df["park"].str.strip() == park_name)
+        & (df["type"].str.strip() == "レストラン")
     ].copy()
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
-            "AppleWebKit/605.1.15 Version/17.0 "
-            "Mobile/15E148 Safari/604.1"
-        ),
-        "Accept-Language": "ja-JP,ja;q=0.9",
-    }
-
-    def fetch_one(row):
-        csv_name = row["name_ja"].strip()
-        detail_url = row["official_url"].strip()
-
-        try:
-            response = requests.get(
-                detail_url,
-                headers=headers,
-                timeout=10,
-            )
-            response.raise_for_status()
-
-            soup = BeautifulSoup(
-                response.text,
-                "html.parser",
-            )
-            detail_text = soup.get_text(" ", strip=True)
-
-            mobile_order = any(
-                marker in detail_text
-                for marker in (
-                    "ディズニー・モバイルオーダー対象",
-                    "ディズニー・モバイルオーダーについて",
-                )
-            )
-            priority_seating = any(
-                marker in detail_text
-                for marker in (
-                    "プライオリティ・シーティング対応",
-                    "プライオリティ・シーティング対象",
-                )
-            )
-            page_loaded = True
-
-        except requests.RequestException:
-            mobile_order = False
-            priority_seating = False
-            page_loaded = False
-
-        return {
-            "name": csv_name,
-            "normalized": normalize_name(csv_name),
-            "official_url": detail_url,
-            "opening_hours": [],
-            "mobile_order": mobile_order,
-            "priority_seating": priority_seating,
-            "page_loaded": page_loaded,
-        }
-
-    rows = [
-        row
-        for _, row in link_df.iterrows()
-    ]
-    if not rows:
-        return []
-
     records = []
-    max_workers = min(8, len(rows))
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(fetch_one, row)
-            for row in rows
-        ]
-        for future in as_completed(futures):
-            records.append(future.result())
+    for _, row in df.iterrows():
+        name = row["name_ja"].strip()
+        url = row["official_url"].strip()
+
+        if not name:
+            continue
+
+        records.append(
+            {
+                "name": name,
+                "normalized": normalize_name(name),
+                "official_url": url,
+            }
+        )
 
     return records
-
 
 def match_restaurant_info(
     restaurant_name,
@@ -688,7 +755,6 @@ def deduplicate_facilities(frame):
 
 OFFICIAL_LINKS_FILE = BASE_DIR / "official_links.csv"
 
-
 # ------------------------------------------------------------------
 # 東京ディズニー公式の個別詳細ページ
 # ------------------------------------------------------------------
@@ -713,8 +779,9 @@ def normalize_name(value):
 
     return value
 
-@st.cache_data(ttl=60)
+@st.cache_data
 def load_official_links():
+    """公式リンクと、CSVに保存した公式サービス情報を読む。"""
     if not OFFICIAL_LINKS_FILE.exists():
         return {}
 
@@ -722,6 +789,20 @@ def load_official_links():
         OFFICIAL_LINKS_FILE,
         dtype=str,
     ).fillna("")
+
+    required = {
+        "park",
+        "type",
+        "name_ja",
+        "official_url",
+    }
+    if not required.issubset(df.columns):
+        return {}
+
+    def as_bool(value):
+        return str(value).strip().lower() in {
+            "1", "true", "yes", "対象", "あり"
+        }
 
     links = {}
 
@@ -744,11 +825,196 @@ def load_official_links():
             "name": name,
             "normalized": normalize_name(name),
             "url": url,
+            "mobile_order": as_bool(row.get("mobile_order", "")),
+            "priority_seating": as_bool(row.get("priority_seating", "")),
         }
 
     return links
 
 
+def detail_pattern(park_name, facility_type):
+    park_code = "tdl" if park_name == "東京ディズニーランド" else "tds"
+    section = {
+        "アトラクション": "attraction",
+        "レストラン": "restaurant",
+        "ショップ": "shop",
+    }.get(facility_type)
+
+    if not section:
+        return None
+
+    return re.compile(
+        rf"/{park_code}/{section}/detail/\d+/?$"
+    )
+
+
+@st.cache_data(ttl=21600)
+def get_official_facilities(park_name, facility_type):
+    """
+    公式一覧から detail/数字/ のURLを抽出し、
+    各個別ページを開いて正式な施設名を取得する。
+    """
+    list_url = PARKS[park_name]["official"].get(facility_type)
+    pattern = detail_pattern(park_name, facility_type)
+
+    if not list_url or not pattern:
+        return []
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1"
+        ),
+        "Accept-Language": "ja-JP,ja;q=0.9",
+    }
+
+    try:
+        response = requests.get(
+            list_url,
+            headers=headers,
+            timeout=30,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return []
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    base_host = urllib.parse.urlparse(list_url).netloc
+    detail_urls = set()
+
+    for anchor in soup.find_all("a", href=True):
+        absolute_url = urllib.parse.urljoin(
+            list_url,
+            anchor.get("href", "").strip(),
+        )
+        parsed = urllib.parse.urlparse(absolute_url)
+
+        if (
+            parsed.netloc == base_host
+            and pattern.search(parsed.path)
+        ):
+            detail_urls.add(absolute_url)
+
+    def fetch_detail(detail_url):
+        try:
+            detail_response = requests.get(
+                detail_url,
+                headers=headers,
+                timeout=20,
+            )
+            detail_response.raise_for_status()
+        except requests.RequestException:
+            return None
+
+        detail_soup = BeautifulSoup(
+            detail_response.text,
+            "html.parser",
+        )
+
+        candidates = []
+
+        for selector in [
+            "h1",
+            "main h2",
+            'meta[property="og:title"]',
+            'meta[name="twitter:title"]',
+            "title",
+        ]:
+            for node in detail_soup.select(selector):
+                if node.name == "meta":
+                    text = node.get("content", "")
+                else:
+                    text = node.get_text(" ", strip=True)
+
+                text = re.sub(
+                    r"^【公式】|[｜|]\s*東京ディズニー.*$",
+                    "",
+                    str(text),
+                ).strip()
+
+                if 2 <= len(text) <= 100:
+                    candidates.append(text)
+
+        if not candidates:
+            return None
+
+        # h1があれば先頭になるので、最初の日本語候補を優先
+        name = next(
+            (
+                item
+                for item in candidates
+                if contains_japanese(item)
+            ),
+            candidates[0],
+        )
+
+        return {
+            "name": name,
+            "normalized": normalize_name(name),
+            "url": detail_url,
+        }
+
+    records = []
+
+    # 詳細ページを並列取得して待ち時間を抑える
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {
+            executor.submit(fetch_detail, url): url
+            for url in detail_urls
+        }
+
+        for future in as_completed(futures):
+            record = future.result()
+            if (
+                record
+                and record["normalized"]
+            ):
+                records.append(record)
+
+    return records
+
+
+def official_match_score(target, candidate):
+    """完全一致・包含・類似度を組み合わせて採点する。"""
+    if not target or not candidate:
+        return 0.0
+    if target == candidate:
+        return 1.0
+    if target in candidate or candidate in target:
+        shorter = min(len(target), len(candidate))
+        longer = max(len(target), len(candidate))
+        return 0.88 + 0.1 * (shorter / longer)
+    return SequenceMatcher(None, target, candidate).ratio()
+
+
+def match_official_facility(park_name, facility_type, facility_name):
+    """
+    個別詳細ページが高い確度で一致した場合だけURLを返す。
+    一覧ページへのフォールバックはしない。
+    """
+    entries = get_official_facilities(park_name, facility_type)
+    target = normalize_name(facility_name)
+
+    if not target or not entries:
+        return None
+
+    scored = [
+        (
+            official_match_score(target, entry["normalized"]),
+            entry,
+        )
+        for entry in entries
+    ]
+    score, best = max(scored, key=lambda item: item[0])
+
+    # 誤リンク防止。個別ページを特定できないときはボタンを出さない。
+    if score < 0.80:
+        return None
+
+    return {
+        **best,
+        "score": score,
+    }
 def get_suspension_info(
     facility_name,
     suspension_records,
@@ -830,6 +1096,38 @@ def suspension_status(record):
 # ------------------------------------------------------------------
 # 計算・表示情報
 # ------------------------------------------------------------------
+
+def scroll_to_anchor(anchor_id):
+    """再実行後に指定した画面位置へ移動する。"""
+    components.html(
+        f"""
+        <script>
+        const target = window.parent.document.getElementById(
+            {anchor_id!r}
+        );
+        if (target) {{
+            setTimeout(() => {{
+                target.scrollIntoView({{
+                    behavior: "smooth",
+                    block: "start"
+                }});
+            }}, 250);
+        }}
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+def consume_scroll_target(anchor_id):
+    """このアンカーへの移動予約があれば一度だけ実行する。"""
+    if st.session_state.get("scroll_target") != anchor_id:
+        return
+
+    scroll_to_anchor(anchor_id)
+    st.session_state.pop("scroll_target", None)
+
 
 def normalize_location(value):
     """GPS部品の返却形式から緯度・経度を取り出す。"""
@@ -1297,6 +1595,29 @@ category_to_types = {
 
 facility_types = category_to_types[category_page]
 
+attraction_search = ""
+selected_area = "すべて"
+
+if category_page == "🎢 アトラクション":
+    attraction_search = st.text_input(
+        "アトラクション検索",
+        placeholder="アトラクション名を検索",
+        label_visibility="collapsed",
+        key=f"attraction_search_{park_name}",
+    )
+
+    area_options = [
+        "すべて",
+        *ATTRACTION_AREAS.get(park_name, {}).keys(),
+    ]
+
+    selected_area = st.selectbox(
+        "エリア",
+        area_options,
+        key=f"attraction_area_{park_name}",
+    )
+
+
 sort_mode = st.selectbox(
     "並べ替え",
     [
@@ -1349,13 +1670,6 @@ if category_page == "••• その他":
 
 search_word = ""
 
-max_results = st.slider(
-    "表示件数",
-    min_value=10,
-    max_value=80,
-    value=30,
-    step=10,
-)
 
 location_raw = gps_location_button(
     buttonText="現在地を取得"
@@ -1436,6 +1750,13 @@ attraction_df["name_ja"] = (
     .fillna(attraction_df["name_en"])
 )
 
+attraction_df["area"] = attraction_df["name_ja"].map(
+    lambda name: attraction_area(
+        park_name,
+        name,
+    )
+)
+
 if not live_df.empty:
     attraction_df = attraction_df.merge(
         live_df,
@@ -1514,6 +1835,7 @@ if not poi_df.empty:
     poi_df["queue_type"] = pd.NA
     poi_df["thrill_level"] = "穏やか"
     poi_df["icon"] = poi_df["type"].map(TYPE_ICONS)
+    poi_df["area"] = ""
 
     # 同じ名前のアトラクションがOSMにもある場合は重複を避ける
     attraction_names = set(
@@ -1589,10 +1911,11 @@ all_df = all_df[
 all_df = deduplicate_facilities(all_df)
 
 # 公式個別ページの有無を一度だけ計算してカードでも再利用
+official_lookup = {}
 manual_links = load_official_links()
 
 def lookup_official(row):
-    """CSVから公式個別ページを探す。"""
+    """同じパーク・種別内で公式リンクを照合する。"""
     facility_type = row["type"]
     target = normalize_name(row["name_ja"])
 
@@ -1613,10 +1936,7 @@ def lookup_official(row):
         data
         for (csv_park, csv_type, _), data
         in manual_links.items()
-        if (
-            csv_park == park_name
-            and csv_type == facility_type
-        )
+        if csv_park == park_name and csv_type == facility_type
     ]
 
     best = None
@@ -1630,7 +1950,9 @@ def lookup_official(row):
         if target == candidate_name:
             score = 1.0
         elif target in candidate_name or candidate_name in target:
-            score = 0.95
+            shorter = min(len(target), len(candidate_name))
+            longer = max(len(target), len(candidate_name))
+            score = 0.90 + 0.09 * (shorter / longer)
         else:
             score = SequenceMatcher(
                 None,
@@ -1642,7 +1964,8 @@ def lookup_official(row):
             best_score = score
             best = candidate
 
-    return best if best_score >= 0.86 else None
+    threshold = 0.80 if facility_type == "レストラン" else 0.86
+    return best if best_score >= threshold else None
 
 all_df["official_info"] = all_df.apply(
     lookup_official,
@@ -1663,41 +1986,50 @@ all_df["restaurant_info"] = all_df.apply(
     axis=1,
 )
 
-all_df["mobile_order"] = all_df[
-    "restaurant_info"
-].map(
-    lambda value: bool(
-        value
-        and value.get("mobile_order")
-    )
-)
 
-all_df["priority_seating"] = all_df[
-    "restaurant_info"
-].map(
-    lambda value: bool(
-        value
-        and value.get("priority_seating")
-    )
-)
 
-all_df["restaurant_hours"] = all_df[
-    "restaurant_info"
-].map(
-    lambda value: (
-        value.get("opening_hours", [])
-        if value
-        else []
-    )
-)
 all_df["has_official_detail"] = all_df[
     "official_info"
 ].map(bool)
+
+# ショップは東京ディズニーリゾート公式の個別ページと
+# 照合できたパーク内店舗だけ残す。
+# OSM由来のコンビニ、美容院、マッサージ店などは表示しない。
+shop_mask = all_df["type"] == "ショップ"
+all_df = all_df[
+    (~shop_mask)
+    | all_df["has_official_detail"]
+].copy()
+
+all_df["mobile_order"] = all_df["official_info"].map(
+    lambda value: bool(value and value.get("mobile_order"))
+)
+
+all_df["priority_seating"] = all_df["official_info"].map(
+    lambda value: bool(value and value.get("priority_seating"))
+)
 
 # 絞り込み
 display_df = all_df[
     all_df["type"].isin(facility_types)
 ].copy()
+
+if category_page == "🎢 アトラクション":
+    if attraction_search.strip():
+        display_df = display_df[
+            display_df["name_ja"]
+            .astype(str)
+            .str.contains(
+                attraction_search.strip(),
+                case=False,
+                na=False,
+            )
+        ]
+
+    if selected_area != "すべて":
+        display_df = display_df[
+            display_df["area"] == selected_area
+        ]
 
 if cool_only:
     display_df = display_df[
@@ -1746,7 +2078,7 @@ else:
         na_position="last",
     )
 
-display_df = display_df.head(max_results).reset_index(drop=True)
+display_df = display_df.reset_index(drop=True)
 
 favorites = load_favorites()
 icon_catalog = load_icon_catalog()
@@ -1780,6 +2112,12 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+st.markdown(
+    '<div id="page_status"></div>',
+    unsafe_allow_html=True,
+)
+consume_scroll_target("page_status")
+
 current_spot = st.session_state.get("current_spot")
 route_target = st.session_state.get("route_target")
 
@@ -1808,6 +2146,12 @@ st.markdown(
 
 
 # 選択中ルート
+st.markdown(
+    '<div id="route_section"></div>',
+    unsafe_allow_html=True,
+)
+consume_scroll_target("route_section")
+
 if route_target:
     st.subheader(f"🚶 {route_target['name_ja']}へ行く")
 
@@ -1906,8 +2250,15 @@ if route_target:
             type="primary",
             use_container_width=True,
         ):
-            st.session_state["current_spot"] = dict(route_target)
+            arrived_spot = {
+                "entity_id": str(route_target["entity_id"]),
+                "name_ja": str(route_target["name_ja"]),
+                "lat": float(route_target["lat"]),
+                "lon": float(route_target["lon"]),
+            }
+            st.session_state["current_spot"] = arrived_spot
             st.session_state.pop("route_target", None)
+            st.session_state["scroll_target"] = "page_status"
             st.rerun()
 
     with close_col:
@@ -1916,6 +2267,7 @@ if route_target:
             use_container_width=True,
         ):
             st.session_state.pop("route_target", None)
+            st.session_state["scroll_target"] = "page_status"
             st.rerun()
 
 
@@ -2003,15 +2355,23 @@ def show_facility_cards(frame, key_prefix):
                     info_parts.append(status_text)
 
                 wait_badge = ""
+                area_badge = ""
                 if row["type"] == "アトラクション":
                     wait_badge = (
                         f'<span class="badge badge-wait">{wait_text}</span>'
+                    )
+                    area_name = str(
+                        row.get("area") or "エリア未設定"
+                    )
+                    area_badge = (
+                        f'<span class="badge">🗺 {area_name}</span>'
                     )
 
                 st.markdown(
                     f"""
                     {wait_badge}
                     <span class="badge">{row["type"]}</span>
+                    {area_badge}
                     <span class="badge">📍 {int(row["distance_m"])}m</span>
                     """,
                     unsafe_allow_html=True,
@@ -2079,27 +2439,6 @@ def show_facility_cards(frame, key_prefix):
                         f"料理：{details['cuisine']}"
                     )
 
-                    restaurant_hours = row.get(
-                        "restaurant_hours",
-                        [],
-                    )
-
-                    if (
-                        isinstance(restaurant_hours, list)
-                        and restaurant_hours
-                    ):
-                        hours_text = "／".join(
-                            restaurant_hours[:3]
-                        )
-
-                        st.write(
-                            f"🕒 公式営業時間：{hours_text}"
-                        )
-                    else:
-                        st.write(
-                            "🕒 公式営業時間：情報なし"
-                        )
-
                     service_parts = []
 
                     if bool(row.get("mobile_order")):
@@ -2109,30 +2448,11 @@ def show_facility_cards(frame, key_prefix):
 
                     if bool(row.get("priority_seating")):
                         service_parts.append(
-                            "🪑 プライオリティ・シーティング対象"
+                            "🪑 プライオリティ・シーティング対応"
                         )
 
                     if service_parts:
-                        st.success(
-                            "　".join(service_parts)
-                        )
-                    else:
-                        restaurant_info = row.get("restaurant_info")
-                    
-                        if not restaurant_info:
-                            st.caption(
-                                "公式店舗情報と照合できませんでした"
-                            )
-                    
-                        elif not restaurant_info.get("page_loaded"):
-                            st.caption(
-                                "公式ページを読み込めませんでした"
-                            )
-                    
-                        else:
-                            st.caption(
-                                "モバイルオーダー・優先案内の対象外"
-                            )
+                        st.success("　".join(service_parts))
                 elif row["type"] == "ショップ":
                     shop_kind = (
                         (row.get("osm_tags") or {}).get("shop")
@@ -2163,7 +2483,13 @@ def show_facility_cards(frame, key_prefix):
                     key=f"{key_prefix}_here_{entity_id}_{index}",
                     use_container_width=True,
                 ):
-                    st.session_state["current_spot"] = dict(spot_payload)
+                    st.session_state["current_spot"] = {
+                        "entity_id": str(spot_payload["entity_id"]),
+                        "name_ja": str(spot_payload["name_ja"]),
+                        "lat": float(spot_payload["lat"]),
+                        "lon": float(spot_payload["lon"]),
+                    }
+                    st.session_state["scroll_target"] = "page_status"
                     st.rerun()
 
             with action2:
@@ -2173,7 +2499,13 @@ def show_facility_cards(frame, key_prefix):
                     type="primary",
                     use_container_width=True,
                 ):
-                    st.session_state["route_target"] = dict(spot_payload)
+                    st.session_state["route_target"] = {
+                        "entity_id": str(spot_payload["entity_id"]),
+                        "name_ja": str(spot_payload["name_ja"]),
+                        "lat": float(spot_payload["lat"]),
+                        "lon": float(spot_payload["lon"]),
+                    }
+                    st.session_state["scroll_target"] = "route_section"
                     st.rerun()
 
             with action3:
@@ -2350,7 +2682,7 @@ if category_page == "••• その他":
         ).sort_values(
             ["distance_m", "wait_time"],
             na_position="last",
-        ).head(40).reset_index(drop=True)
+        ).reset_index(drop=True)
 
         if not query.strip():
             st.info("施設名、カレー、カフェ、城、涼しい、などで検索できます。")
