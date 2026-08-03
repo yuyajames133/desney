@@ -788,15 +788,12 @@ def load_official_links():
 
 def normalize_name(value):
     """施設名の記号差を吸収して照合する。"""
-    value = unicodedata.normalize("NFKC", str(value or "")).lower()
-    value = value.replace("ヴ", "ブ")
-    value = re.sub(
-        r"[\s　・･'\"“”‘’()（）\[\]【】\-‐‑–—~〜!！?？:：,，.。]",
-        "",
-        value,
-    )
+    value = unicodedata.normalize(
+        "NFKC",
+        str(value or ""),
+    ).lower()
 
-    value = value.replace("ウ", "ブ")
+    value = value.replace("ヴ", "ブ")
     value = value.replace("･", "・")
     value = value.replace("/", "・")
 
@@ -806,7 +803,7 @@ def normalize_name(value):
         "",
         value,
     )
-     
+
     return value
 
 @st.cache_data(ttl=60)
@@ -2464,9 +2461,16 @@ def show_facility_cards(frame, key_prefix):
                             "　".join(service_parts)
                         )
                     else:
-                        st.caption(
-                            "モバイルオーダー・優先案内の公式表示なし"
-                        )
+                        restaurant_info = row.get("restaurant_info")
+                    
+                        if restaurant_info:
+                            st.caption(
+                                "モバイルオーダー・優先案内の対象表示なし"
+                            )
+                        else:
+                            st.caption(
+                                "公式サービス情報を取得できませんでした"
+                            )
 
                 elif row["type"] == "ショップ":
                     shop_kind = (
