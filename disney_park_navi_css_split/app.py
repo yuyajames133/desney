@@ -397,10 +397,32 @@ def get_official_suspensions(park_name):
 @st.cache_data(ttl=1800)
 def get_official_restaurant_info(park_name):
     """
-    公式レストラン一覧から、
-    店名・営業時間・モバイルオーダー対象を取得する。
+    official_links.csvに登録された公式個別ページから、
+    店名・モバイルオーダー・優先案内を取得する。
     """
-    url = PARKS[park_name]["official"]["レストラン"]
+    if not OFFICIAL_LINKS_FILE.exists():
+        return []
+
+    link_df = pd.read_csv(
+        OFFICIAL_LINKS_FILE,
+        dtype=str,
+    ).fillna("")
+
+    required_columns = {
+        "park",
+        "type",
+        "name_ja",
+        "official_url",
+    }
+
+    if not required_columns.issubset(link_df.columns):
+        return []
+
+    link_df = link_df[
+        (link_df["park"].str.strip() == park_name)
+        & (link_df["type"].str.strip() == "レストラン")
+        & (link_df["official_url"].str.strip() != "")
+    ].copy()
 
     headers = {
         "User-Agent": (
@@ -411,148 +433,71 @@ def get_official_restaurant_info(park_name):
         "Accept-Language": "ja-JP,ja;q=0.9",
     }
 
-    try:
-        response = requests.get(
-            url,
-            headers=headers,
-            timeout=30,
-        )
-        response.raise_for_status()
-    except requests.RequestException:
-        return []
-
-    soup = BeautifulSoup(
-        response.text,
-        "html.parser",
-    )
-
-    park_code = (
-        "tdl"
-        if park_name == "東京ディズニーランド"
-        else "tds"
-    )
-
-    detail_pattern = re.compile(
-        rf"/{park_code}/restaurant/detail/\d+/?$"
-    )
-
     records = []
-    seen_urls = set()
 
-    for anchor in soup.find_all("a", href=True):
-        detail_url = urllib.parse.urljoin(
-            url,
-            anchor.get("href", ""),
-        )
+    for _, link_row in link_df.iterrows():
+        csv_name = link_row["name_ja"].strip()
+        detail_url = link_row["official_url"].strip()
 
-        parsed = urllib.parse.urlparse(detail_url)
-
-        if not detail_pattern.search(parsed.path):
-            continue
-
-        if detail_url in seen_urls:
-            continue
-
-        seen_urls.add(detail_url)
-
-        # 一覧カード全体の文章を取得
-        container = (
-            anchor.find_parent("li")
-            or anchor.find_parent("article")
-            or anchor.parent
-        )
-
-        card_text = container.get_text(
-            " ",
-            strip=True,
-        )
-
-        # 個別ページから正式名称を取得
         try:
-            detail_response = requests.get(
+            response = requests.get(
                 detail_url,
                 headers=headers,
                 timeout=20,
             )
-            detail_response.raise_for_status()
+            response.raise_for_status()
 
-            detail_soup = BeautifulSoup(
-                detail_response.text,
+            soup = BeautifulSoup(
+                response.text,
                 "html.parser",
             )
 
-            heading = detail_soup.find("h1")
+            heading = soup.find("h1")
 
             if heading:
-                name = heading.get_text(
+                official_name = heading.get_text(
                     " ",
                     strip=True,
                 )
             else:
-                name = anchor.get_text(
-                    " ",
-                    strip=True,
-                )
+                official_name = csv_name
 
-            detail_text = detail_soup.get_text(
+            detail_text = soup.get_text(
                 " ",
                 strip=True,
+            )
+
+            mobile_order = (
+                "ディズニー・モバイルオーダー対象"
+                in detail_text
+                or
+                "ディズニー・モバイルオーダーについて"
+                in detail_text
+            )
+
+            priority_seating = (
+                "プライオリティ・シーティング対応"
+                in detail_text
+                or
+                "プライオリティ・シーティング対象"
+                in detail_text
             )
 
         except requests.RequestException:
-            name = anchor.get_text(
-                " ",
-                strip=True,
-            )
-            detail_text = card_text
-
-        name = re.sub(
-            r"^【公式】",
-            "",
-            str(name),
-        ).strip()
-
-        if not name:
-            continue
-
-        # 例：9:00 - 20:30
-        time_matches = re.findall(
-            r"\d{1,2}:\d{2}\s*[-–〜～]\s*\d{1,2}:\d{2}",
-            card_text,
-        )
-
-        # 同じ時間が日付ごとに何度も出るので重複を除く
-        opening_hours = []
-
-        for time_text in time_matches:
-            cleaned = re.sub(
-                r"\s*[-–〜～]\s*",
-                "〜",
-                time_text,
-            )
-
-            if cleaned not in opening_hours:
-                opening_hours.append(cleaned)
-
-        mobile_order = (
-            "ディズニー・モバイルオーダー対象" in card_text
-            or "ディズニー・モバイルオーダー対象" in detail_text
-            or "ディズニー・モバイルオーダーについて" in detail_text
-        )
-
-        priority_seating = (
-            "プライオリティ・シーティング" in card_text
-            or "プライオリティ・シーティング" in detail_text
-        )
+            official_name = csv_name
+            mobile_order = False
+            priority_seating = False
+            detail_text = ""
 
         records.append(
             {
-                "name": name,
-                "normalized": normalize_name(name),
+                "name": official_name,
+                "normalized": normalize_name(csv_name),
                 "official_url": detail_url,
-                "opening_hours": opening_hours,
+                "opening_hours": [],
                 "mobile_order": mobile_order,
                 "priority_seating": priority_seating,
+                "page_loaded": bool(detail_text),
             }
         )
 
@@ -2463,15 +2408,20 @@ def show_facility_cards(frame, key_prefix):
                     else:
                         restaurant_info = row.get("restaurant_info")
                     
-                        if restaurant_info:
+                        if not restaurant_info:
                             st.caption(
-                                "モバイルオーダー・優先案内の対象表示なし"
+                                "公式店舗情報と照合できませんでした"
                             )
+                    
+                        elif not restaurant_info.get("page_loaded"):
+                            st.caption(
+                                "公式ページを読み込めませんでした"
+                            )
+                    
                         else:
                             st.caption(
-                                "公式サービス情報を取得できませんでした"
+                                "モバイルオーダー・優先案内の対象外"
                             )
-
                 elif row["type"] == "ショップ":
                     shop_kind = (
                         (row.get("osm_tags") or {}).get("shop")
