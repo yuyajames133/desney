@@ -401,3 +401,19 @@ div[data-testid="stVerticalBlockBorderWrapper"] .badge-wait {
     font-weight: 950 !important;
     margin: .15rem 0 .25rem !important;
 }
+/* モバイルオーダー・優先案内を濃く表示 */
+div[data-testid="stAlert"] {
+    background: #ffffff !important;
+    border: 2px solid #0b5f9e !important;
+    border-radius: 14px !important;
+}
+
+div[data-testid="stAlert"] p,
+div[data-testid="stAlert"] div,
+div[data-testid="stAlert"] span {
+    color: #06182b !important;
+    -webkit-text-fill-color: #06182b !important;
+    font-weight: 950 !important;
+    opacity: 1 !important;
+    text-shadow: none !important;
+}
