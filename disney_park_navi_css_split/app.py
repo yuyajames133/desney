@@ -1800,106 +1800,102 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
 # ------------------------------------------------------------------
 
 def add_facility_marker(disney_map, row, favorites):
-    """
-    施設マーカーを地図へ追加する。
-
-    地図を縮小したときでも施設の種類がすぐ分かるように、
-    透明な丸ではなく絵文字アイコンを表示する。
-
-    アトラクション: 🎢
-    レストラン:     🍽
-    ショップ:       🛍
-
-    お気に入りに独自アイコンを設定している場合は、
-    そのアイコンを優先して表示する。
-
-    マーカーをクリックしたときのポップアップは
-    「施設名だけ」にして、距離や待ち時間は表示しない。
-    """
+    """施設マーカーを追加する。"""
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
+    type_icon = TYPE_ICONS.get(row["type"], "📍")
+    marker_text = favorites.get(entity_id, type_icon)
 
-    # 施設種別ごとの基本アイコン
-    type_icon = {
-        "アトラクション": "🎢",
-        "レストラン": "🍽",
-        "ショップ": "🛍",
-    }.get(
-        row["type"],
-        "📍",
+    wait_value = row.get("wait_time")
+    status_text = str(
+        row.get("状況", "情報なし")
     )
+    
+    if status_text == "休止中":
+        wait_text = "休止中"
+    
+    elif status_text == "一時休止":
+        wait_text = "一時休止"
+    
+    elif status_text == "受付終了":
+        wait_text = "受付終了"
+    
+    elif pd.notna(wait_value):
+        wait_text = f"{int(wait_value)}分"
+    
+    else:
+        wait_text = "待ち時間情報なし"
 
-    # お気に入りで専用アイコンを設定していればそちらを使う
-    marker_text = favorites.get(
-        entity_id,
-        type_icon,
-    )
+    display_name = row["name_ja"]
 
-    display_name = str(
-        row["name_ja"]
-    )
-
-    # 常に見やすい白背景の絵文字マーカーにする
-    marker_icon = folium.DivIcon(
-        html=f"""
-        <div style="
-            width:32px;
-            height:32px;
-            border-radius:50%;
-            background:rgba(255,255,255,.96);
-            border:2px solid rgba(30,41,59,.45);
-            box-shadow:0 2px 6px rgba(0,0,0,.28);
-            font-size:18px;
-            line-height:28px;
-            text-align:center;
-            white-space:nowrap;
-        ">{marker_text}</div>
-        """,
-        icon_size=(32, 32),
-        icon_anchor=(16, 16),
-    )
-
-    # クリック時は施設名だけ。
-    # 距離・待ち時間・種類などはカード側で確認できるため、
-    # 地図上では余計な情報を出さない。
-    popup_html = f"""
-    <div style="
-        font-size:14px;
-        font-weight:800;
-        line-height:1.35;
-        padding:2px 4px;
-        white-space:nowrap;
-    ">
-        {marker_text} {display_name}
-    </div>
+    popup = f"""
+    <b>{marker_text} {display_name}</b><br>
+    種類：{row["type"]}<br>
+    直線距離：{int(row["distance_m"])}m<br>
+    待ち時間：{wait_text}<br>
     """
 
+    if is_favorite:
+        marker_icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width:34px;
+                height:34px;
+                border-radius:50%;
+                background:white;
+                border:3px solid #f5b301;
+                box-shadow:0 2px 5px rgba(0,0,0,.35);
+                font-size:20px;
+                line-height:28px;
+                text-align:center;
+            ">{marker_text}</div>
+            """,
+            icon_size=(34, 34),
+            icon_anchor=(17, 17),
+        )
+    else:
+        color = {
+            "アトラクション": "red",
+            "レストラン": "green",
+            "ショップ": "purple",
+            "ランドマーク": "cadetblue",
+        }.get(row["type"], "gray")
+
+        marker_icon = folium.Icon(
+            color=color,
+            icon="info-sign",
+        )
+
     folium.Marker(
-        [
-            row["lat"],
-            row["lon"],
-        ],
-        tooltip=display_name,
-        popup=folium.Popup(
-            popup_html,
-            max_width=220,
-        ),
+        [row["lat"], row["lon"]],
+        tooltip=f"{marker_text} {display_name}",
+        popup=folium.Popup(popup, max_width=300),
         icon=marker_icon,
     ).add_to(disney_map)
 
 
-
-def make_overview_map(frame, location, favorites):
+def make_overview_map(
+    marker_frame,
+    location,
+    favorites,
+    focus_frame=None,
+):
     """
     一覧確認用の地図。
 
-    通常は現在地を中心に作成するが、
-    表示中の施設がある場合は、その施設群が全部見える範囲へ
-    自動的に地図を合わせる。
+    marker_frame:
+        地図に実際に置くマーカー。
+        ここにはパーク内の全対象施設を渡す。
 
-    そのため、
-    「ファンタジーランド」などエリアで絞り込んだときは
-    そのエリアに出ている施設だけが地図上にまとまって表示される。
+    focus_frame:
+        現在の検索・エリア絞り込み結果。
+        エリアを選んでいる場合は、その施設群が見える位置へ
+        最初の表示範囲だけ合わせる。
+
+    つまり、
+        ・最初は選択中エリアを見やすく表示
+        ・地図を縮小すると他エリアの施設も全部見える
+    という動きになる。
     """
     disney_map = folium.Map(
         location=[
@@ -1916,38 +1912,27 @@ def make_overview_map(frame, location, favorites):
         scroll_wheel_zoom=False,
     )
 
-    # GPS上の現在地
+    # GPS現在地マーカー
     folium.Marker(
         [
             location["latitude"],
             location["longitude"],
         ],
         tooltip="現在地",
-        icon=folium.DivIcon(
-            html="""
-            <div style="
-                width:34px;
-                height:34px;
-                border-radius:50%;
-                background:#2563eb;
-                border:3px solid white;
-                box-shadow:0 2px 7px rgba(0,0,0,.35);
-                color:white;
-                font-size:17px;
-                line-height:28px;
-                text-align:center;
-            ">📍</div>
-            """,
-            icon_size=(34, 34),
-            icon_anchor=(17, 17),
+        icon=folium.Icon(
+            color="blue",
+            icon="user",
         ),
     ).add_to(disney_map)
 
-    # 現在の絞り込み結果だけを地図へ載せる
-    marker_frame = frame.dropna(
-        subset=["lat", "lon"]
-    ).copy()
-
+    # --------------------------------------------------------
+    # 地図上のマーカーは「現在の絞り込み結果だけ」にしない。
+    # marker_frameに入っている全施設を置く。
+    #
+    # これにより、例えばファンタジーランドを選択中でも
+    # 地図を縮小すればワールドバザールや
+    # トゥモローランド等の施設も見える。
+    # --------------------------------------------------------
     for _, row in marker_frame.iterrows():
         add_facility_marker(
             disney_map,
@@ -1955,36 +1940,37 @@ def make_overview_map(frame, location, favorites):
             favorites,
         )
 
-    # 施設がある場合は、現在地ではなく
-    # 「今表示中の施設群」が全部見える範囲へ自動で寄せる。
-    if not marker_frame.empty:
-        bounds = [
-            [
-                float(marker_frame["lat"].min()),
-                float(marker_frame["lon"].min()),
-            ],
-            [
-                float(marker_frame["lat"].max()),
-                float(marker_frame["lon"].max()),
-            ],
-        ]
-
-        # 1件だけの場合はfit_boundsだと寄りすぎるので固定ズーム
-        if len(marker_frame) == 1:
-            only_row = marker_frame.iloc[0]
-            disney_map.location = [
-                float(only_row["lat"]),
-                float(only_row["lon"]),
+    # --------------------------------------------------------
+    # 初期表示だけ現在の絞り込み結果へ寄せる
+    # --------------------------------------------------------
+    if (
+        focus_frame is not None
+        and not focus_frame.empty
+    ):
+        focus_points = (
+            focus_frame[
+                ["lat", "lon"]
             ]
-            disney_map.options["zoom"] = 18
-        else:
+            .dropna()
+            .values
+            .tolist()
+        )
+
+        # 2件以上なら、その施設群が画面内へ収まるようにする
+        if len(focus_points) >= 2:
             disney_map.fit_bounds(
-                bounds,
+                focus_points,
                 padding=(35, 35),
             )
 
-    return disney_map
+        # 1件だけならその施設を中心へ
+        elif len(focus_points) == 1:
+            disney_map.location = focus_points[0]
+            disney_map.options[
+                "zoom"
+            ] = 18
 
+    return disney_map
 
 
 def make_route_map(route, target, location):
@@ -2830,11 +2816,30 @@ with st.expander("🗺️ 施設の地図を見る", expanded=False):
         "地図は指で移動・拡大できます。縦スクロールは地図の外側を触ってください。"
     )
 
+    # --------------------------------------------------------
+    # 地図に置くマーカー
+    # --------------------------------------------------------
+    # 現在の検索やエリア絞り込みとは別に、
+    # 選択中カテゴリの施設をパーク全体から取得する。
+    #
+    # 例:
+    #   レストラン画面 → パーク内レストラン全部
+    #   ショップ画面     → パーク内ショップ全部
+    #   アトラクション画面 → パーク内アトラクション全部
+    #
+    # display_dfは「最初にどこへ寄せて表示するか」だけに使う。
+    map_marker_df = all_df[
+        all_df["type"].isin(
+            facility_types
+        )
+    ].copy()
+
     folium_static(
         make_overview_map(
-            display_df,
-            location,
-            favorites,
+            marker_frame=map_marker_df,
+            location=location,
+            favorites=favorites,
+            focus_frame=display_df,
         ),
         width=700,
         height=230,
@@ -3189,38 +3194,6 @@ if category_page in {
     if display_df.empty:
         st.info("条件に合う施設がありません。")
     else:
-        # --------------------------------------------------------
-        # エリアを選んだときだけ、そのエリアの施設を地図で表示
-        # --------------------------------------------------------
-        # 例:
-        #   ファンタジーランドを選択
-        #       ↓
-        #   現在表示中のアトラクション / レストラン / ショップだけ
-        #   地図上にアイコンで表示する。
-        #
-        # アトラクションタブならアトラクションだけ、
-        # レストランタブならレストランだけ、
-        # ショップタブならショップだけ表示される。
-        if selected_area != "すべて":
-            st.markdown(
-                f"### 🗺 {selected_area}の地図"
-            )
-
-            st.caption(
-                f"現在の絞り込み結果 {len(display_df)}件を"
-                "地図に表示しています。"
-            )
-
-            folium_static(
-                make_overview_map(
-                    display_df,
-                    location,
-                    favorites,
-                ),
-                width=700,
-                height=360,
-            )
-
         show_facility_cards(
             display_df,
             key_prefix="all",
@@ -3273,16 +3246,28 @@ if category_page == "⭐ 行きたい":
 if category_page == "🗺 マップ":
     st.markdown("### 🗺 施設マップ")
     st.caption(
-        "🎢 アトラクション／🍽 レストラン／🛍 ショップを"
-        "アイコンで表示します。"
-        "マーカーを押すと施設名だけ表示されます。"
+        "マーカーを押すと施設名を確認できます。"
+        "地図は指で移動・拡大できます。"
     )
+
+    # マップ専用ページでは、
+    # アトラクション・レストラン・ショップを全部表示する。
+    map_all_df = all_df[
+        all_df["type"].isin(
+            [
+                "アトラクション",
+                "レストラン",
+                "ショップ",
+            ]
+        )
+    ].copy()
 
     folium_static(
         make_overview_map(
-            display_df,
-            location,
-            favorites,
+            marker_frame=map_all_df,
+            location=location,
+            favorites=favorites,
+            focus_frame=None,
         ),
         width=700,
         height=430,
