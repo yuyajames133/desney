@@ -1799,172 +1799,107 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
 # Foliumで現在地・施設・ルートを描画
 # ------------------------------------------------------------------
 
-def add_facility_marker(
-    disney_map,
-    row,
-    favorites,
-    emphasized=True,
-):
+def add_facility_marker(disney_map, row, favorites):
     """
     施設マーカーを地図へ追加する。
 
-    emphasized=True:
-        現在のカテゴリ・検索・エリア条件に合っている施設。
-        色付きの通常マーカーで目立たせる。
+    地図を縮小したときでも施設の種類がすぐ分かるように、
+    透明な丸ではなく絵文字アイコンを表示する。
 
-    emphasized=False:
-        現在の絞り込み条件には入っていない施設。
-        地図を縮小したときに周辺施設も分かるよう、
-        小さい薄いマーカーで残しておく。
+    アトラクション: 🎢
+    レストラン:     🍽
+    ショップ:       🛍
+
+    お気に入りに独自アイコンを設定している場合は、
+    そのアイコンを優先して表示する。
+
+    マーカーをクリックしたときのポップアップは
+    「施設名だけ」にして、距離や待ち時間は表示しない。
     """
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
-    type_icon = TYPE_ICONS.get(
+
+    # 施設種別ごとの基本アイコン
+    type_icon = {
+        "アトラクション": "🎢",
+        "レストラン": "🍽",
+        "ショップ": "🛍",
+    }.get(
         row["type"],
         "📍",
     )
+
+    # お気に入りで専用アイコンを設定していればそちらを使う
     marker_text = favorites.get(
         entity_id,
         type_icon,
     )
 
-    wait_value = row.get("wait_time")
-    status_text = str(
-        row.get("状況", "情報なし")
+    display_name = str(
+        row["name_ja"]
     )
 
-    if status_text == "休止中":
-        wait_text = "休止中"
-
-    elif status_text == "一時休止":
-        wait_text = "一時休止"
-
-    elif status_text == "受付終了":
-        wait_text = "受付終了"
-
-    elif pd.notna(wait_value):
-        wait_text = f"{int(wait_value)}分"
-
-    else:
-        wait_text = "待ち時間情報なし"
-
-    display_name = row["name_ja"]
-    area_name = str(
-        row.get("area")
-        or "エリア未設定"
+    # 常に見やすい白背景の絵文字マーカーにする
+    marker_icon = folium.DivIcon(
+        html=f"""
+        <div style="
+            width:32px;
+            height:32px;
+            border-radius:50%;
+            background:rgba(255,255,255,.96);
+            border:2px solid rgba(30,41,59,.45);
+            box-shadow:0 2px 6px rgba(0,0,0,.28);
+            font-size:18px;
+            line-height:28px;
+            text-align:center;
+            white-space:nowrap;
+        ">{marker_text}</div>
+        """,
+        icon_size=(32, 32),
+        icon_anchor=(16, 16),
     )
 
-    popup = f"""
-    <b>{marker_text} {display_name}</b><br>
-    種類：{row["type"]}<br>
-    エリア：{area_name}<br>
-    直線距離：{int(row["distance_m"])}m<br>
-    待ち時間：{wait_text}<br>
+    # クリック時は施設名だけ。
+    # 距離・待ち時間・種類などはカード側で確認できるため、
+    # 地図上では余計な情報を出さない。
+    popup_html = f"""
+    <div style="
+        font-size:14px;
+        font-weight:800;
+        line-height:1.35;
+        padding:2px 4px;
+        white-space:nowrap;
+    ">
+        {marker_text} {display_name}
+    </div>
     """
-
-    # --------------------------------------------------------
-    # 現在の絞り込み条件に合う施設
-    # --------------------------------------------------------
-    if emphasized:
-        if is_favorite:
-            marker_icon = folium.DivIcon(
-                html=f"""
-                <div style="
-                    width:34px;
-                    height:34px;
-                    border-radius:50%;
-                    background:white;
-                    border:3px solid #f5b301;
-                    box-shadow:0 2px 5px rgba(0,0,0,.35);
-                    font-size:20px;
-                    line-height:28px;
-                    text-align:center;
-                ">{marker_text}</div>
-                """,
-                icon_size=(34, 34),
-                icon_anchor=(17, 17),
-            )
-        else:
-            color = {
-                "アトラクション": "red",
-                "レストラン": "green",
-                "ショップ": "purple",
-            }.get(
-                row["type"],
-                "gray",
-            )
-
-            marker_icon = folium.Icon(
-                color=color,
-                icon="info-sign",
-            )
-
-    # --------------------------------------------------------
-    # 絞り込み条件の外にある施設
-    # --------------------------------------------------------
-    else:
-        # 地図を縮小したときに他施設も見えるよう、
-        # 小さい薄い丸で表示する。
-        marker_icon = folium.DivIcon(
-            html=f"""
-            <div title="{display_name}" style="
-                width:12px;
-                height:12px;
-                border-radius:50%;
-                background:rgba(90, 100, 120, .55);
-                border:1px solid rgba(255,255,255,.9);
-                box-shadow:0 1px 3px rgba(0,0,0,.22);
-            "></div>
-            """,
-            icon_size=(12, 12),
-            icon_anchor=(6, 6),
-        )
 
     folium.Marker(
         [
             row["lat"],
             row["lon"],
         ],
-        tooltip=(
-            f"{marker_text} {display_name}"
-            if emphasized
-            else display_name
-        ),
+        tooltip=display_name,
         popup=folium.Popup(
-            popup,
-            max_width=300,
+            popup_html,
+            max_width=220,
         ),
         icon=marker_icon,
-        z_index_offset=(
-            1000
-            if emphasized
-            else 100
-        ),
     ).add_to(disney_map)
 
 
-def make_overview_map(
-    frame,
-    location,
-    favorites,
-    all_facilities=None,
-    focus_on_frame=False,
-):
+
+def make_overview_map(frame, location, favorites):
     """
-    施設一覧用の地図を作る。
+    一覧確認用の地図。
 
-    frame:
-        現在のカテゴリ・検索・エリア条件に合っている施設。
+    通常は現在地を中心に作成するが、
+    表示中の施設がある場合は、その施設群が全部見える範囲へ
+    自動的に地図を合わせる。
 
-    all_facilities:
-        パーク内の全施設。
-        frameに含まれない施設も薄い小さなマーカーで表示する。
-
-    focus_on_frame=True:
-        エリア絞り込みなどをしているとき、
-        最初にframe内の施設が見える範囲へ自動ズームする。
-        その後ユーザーが地図を縮小すれば、
-        他エリアの施設も全部見ることができる。
+    そのため、
+    「ファンタジーランド」などエリアで絞り込んだときは
+    そのエリアに出ている施設だけが地図上にまとまって表示される。
     """
     disney_map = folium.Map(
         location=[
@@ -1981,94 +1916,75 @@ def make_overview_map(
         scroll_wheel_zoom=False,
     )
 
-    # --------------------------------------------------------
-    # GPS現在地
-    # --------------------------------------------------------
+    # GPS上の現在地
     folium.Marker(
         [
             location["latitude"],
             location["longitude"],
         ],
-        tooltip="GPS現在地",
-        icon=folium.Icon(
-            color="blue",
-            icon="user",
+        tooltip="現在地",
+        icon=folium.DivIcon(
+            html="""
+            <div style="
+                width:34px;
+                height:34px;
+                border-radius:50%;
+                background:#2563eb;
+                border:3px solid white;
+                box-shadow:0 2px 7px rgba(0,0,0,.35);
+                color:white;
+                font-size:17px;
+                line-height:28px;
+                text-align:center;
+            ">📍</div>
+            """,
+            icon_size=(34, 34),
+            icon_anchor=(17, 17),
         ),
-        z_index_offset=2000,
     ).add_to(disney_map)
 
-    # --------------------------------------------------------
-    # 絞り込み対象施設のID一覧
-    # --------------------------------------------------------
-    emphasized_ids = set(
-        frame["entity_id"]
-        .astype(str)
-        .tolist()
-    )
+    # 現在の絞り込み結果だけを地図へ載せる
+    marker_frame = frame.dropna(
+        subset=["lat", "lon"]
+    ).copy()
 
-    # --------------------------------------------------------
-    # まず「その他の全施設」を背景として描画
-    # --------------------------------------------------------
-    if all_facilities is not None:
-        background_frame = all_facilities[
-            ~all_facilities[
-                "entity_id"
-            ].astype(str).isin(
-                emphasized_ids
-            )
-        ]
-
-        for _, row in background_frame.iterrows():
-            add_facility_marker(
-                disney_map,
-                row,
-                favorites,
-                emphasized=False,
-            )
-
-    # --------------------------------------------------------
-    # 次に現在の条件に合う施設を上から目立つように描画
-    # --------------------------------------------------------
-    for _, row in frame.iterrows():
+    for _, row in marker_frame.iterrows():
         add_facility_marker(
             disney_map,
             row,
             favorites,
-            emphasized=True,
         )
 
-    # --------------------------------------------------------
-    # エリアなどで絞り込んだ時は、最初の表示範囲を
-    # 該当施設のまとまりへ合わせる。
-    #
-    # ただし背景には他施設も残っているので、
-    # 地図を縮小すればパーク全体の施設が見える。
-    # --------------------------------------------------------
-    if (
-        focus_on_frame
-        and not frame.empty
-    ):
+    # 施設がある場合は、現在地ではなく
+    # 「今表示中の施設群」が全部見える範囲へ自動で寄せる。
+    if not marker_frame.empty:
         bounds = [
             [
-                float(row["lat"]),
-                float(row["lon"]),
-            ]
-            for _, row in frame.iterrows()
+                float(marker_frame["lat"].min()),
+                float(marker_frame["lon"].min()),
+            ],
+            [
+                float(marker_frame["lat"].max()),
+                float(marker_frame["lon"].max()),
+            ],
         ]
 
-        if len(bounds) >= 2:
+        # 1件だけの場合はfit_boundsだと寄りすぎるので固定ズーム
+        if len(marker_frame) == 1:
+            only_row = marker_frame.iloc[0]
+            disney_map.location = [
+                float(only_row["lat"]),
+                float(only_row["lon"]),
+            ]
+            disney_map.options["zoom"] = 18
+        else:
             disney_map.fit_bounds(
                 bounds,
                 padding=(35, 35),
             )
 
-        elif len(bounds) == 1:
-            disney_map.location = bounds[0]
-            disney_map.options[
-                "zoom"
-            ] = 18
-
     return disney_map
+
 
 
 def make_route_map(route, target, location):
@@ -2911,10 +2827,7 @@ if route_target:
 # 一覧地図は折りたたみ
 with st.expander("🗺️ 施設の地図を見る", expanded=False):
     st.caption(
-        "色付きマーカー＝現在の条件に合う施設。"
-        "薄い小さい点＝その他の施設です。"
-        "エリアを選ぶとそのエリアへ自動で寄り、"
-        "地図を縮小するとパーク内の他施設も全部見られます。"
+        "地図は指で移動・拡大できます。縦スクロールは地図の外側を触ってください。"
     )
 
     folium_static(
@@ -2922,10 +2835,6 @@ with st.expander("🗺️ 施設の地図を見る", expanded=False):
             display_df,
             location,
             favorites,
-            all_facilities=all_df,
-            focus_on_frame=(
-                selected_area != "すべて"
-            ),
         ),
         width=700,
         height=230,
@@ -3280,6 +3189,38 @@ if category_page in {
     if display_df.empty:
         st.info("条件に合う施設がありません。")
     else:
+        # --------------------------------------------------------
+        # エリアを選んだときだけ、そのエリアの施設を地図で表示
+        # --------------------------------------------------------
+        # 例:
+        #   ファンタジーランドを選択
+        #       ↓
+        #   現在表示中のアトラクション / レストラン / ショップだけ
+        #   地図上にアイコンで表示する。
+        #
+        # アトラクションタブならアトラクションだけ、
+        # レストランタブならレストランだけ、
+        # ショップタブならショップだけ表示される。
+        if selected_area != "すべて":
+            st.markdown(
+                f"### 🗺 {selected_area}の地図"
+            )
+
+            st.caption(
+                f"現在の絞り込み結果 {len(display_df)}件を"
+                "地図に表示しています。"
+            )
+
+            folium_static(
+                make_overview_map(
+                    display_df,
+                    location,
+                    favorites,
+                ),
+                width=700,
+                height=360,
+            )
+
         show_facility_cards(
             display_df,
             key_prefix="all",
@@ -3332,9 +3273,9 @@ if category_page == "⭐ 行きたい":
 if category_page == "🗺 マップ":
     st.markdown("### 🗺 施設マップ")
     st.caption(
-        "色付きマーカー＝現在の条件に合う施設。"
-        "薄い小さい点＝その他の施設です。"
-        "地図を縮小するとパーク内の施設をまとめて確認できます。"
+        "🎢 アトラクション／🍽 レストラン／🛍 ショップを"
+        "アイコンで表示します。"
+        "マーカーを押すと施設名だけ表示されます。"
     )
 
     folium_static(
@@ -3342,10 +3283,6 @@ if category_page == "🗺 マップ":
             display_df,
             location,
             favorites,
-            all_facilities=all_df,
-            focus_on_frame=(
-                selected_area != "すべて"
-            ),
         ),
         width=700,
         height=430,
