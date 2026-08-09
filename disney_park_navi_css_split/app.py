@@ -287,6 +287,7 @@ def attraction_area(park_name, attraction_name):
 
 # ------------------------------------------------------------------
 # CSV・お気に入り
+# attraction_names.csv / favorites.csv / icon_catalog.csv を扱う
 # ------------------------------------------------------------------
 
 @st.cache_data
@@ -399,6 +400,7 @@ def change_favorite_icon(entity_id, icon):
 
 # ------------------------------------------------------------------
 # API取得
+# ThemeParks.wiki / 東京ディズニー公式 / OpenStreetMap を扱う
 # ------------------------------------------------------------------
 
 def parse_official_date(value):
@@ -648,27 +650,49 @@ def get_official_restaurant_info(park_name):
 
     return records
 
+# ============================================================
+# 公式エリア情報
+# ============================================================
+
 @st.cache_data(ttl=21600)
 def get_official_area_map(park_name, facility_type):
     """
-    公式の一覧ページ1枚から、
-    レストラン/ショップのエリアを取得する。
-    個別ページを大量に開かないので軽い。
+    公式のレストラン一覧 / ショップ一覧ページから、
+    「公式詳細URL → エリア名」の対応表を作る。
+
+    例:
+        {
+            "https://.../restaurant/detail/300": "ワールドバザール",
+            "https://.../restaurant/detail/321": "アドベンチャーランド",
+        }
+
+    個別ページを大量に開かず、一覧ページ1枚だけ読む。
+    6時間キャッシュするため、通常の再実行では再取得しない。
     """
     if facility_type not in {"レストラン", "ショップ"}:
         return {}
 
-    list_url = PARKS[park_name]["official"].get(facility_type)
+    list_url = PARKS[
+        park_name
+    ]["official"].get(
+        facility_type
+    )
+
     if not list_url:
         return {}
 
+    # アトラクション用に定義済みのエリア名一覧をそのまま使う
     area_names = list(
-        ATTRACTION_AREAS.get(park_name, {}).keys()
+        ATTRACTION_AREAS.get(
+            park_name,
+            {},
+        ).keys()
     )
 
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "Mozilla/5.0 "
+            "(iPhone; CPU iPhone OS 17_0 like Mac OS X) "
             "AppleWebKit/605.1.15 Version/17.0 "
             "Mobile/15E148 Safari/604.1"
         ),
@@ -692,20 +716,31 @@ def get_official_area_map(park_name, facility_type):
 
     area_map = {}
 
-    for anchor in soup.find_all("a", href=True):
-        href = anchor.get("href", "")
-        absolute_url = urllib.parse.urljoin(
-            list_url,
-            href,
+    # 公式一覧ページ内の施設詳細リンクを拾う
+    for anchor in soup.find_all(
+        "a",
+        href=True,
+    ):
+        href = anchor.get(
+            "href",
+            "",
         )
 
+        # 種別と違うリンクは除外
         if facility_type == "レストラン":
-            if "/restaurant/detail/" not in absolute_url:
+            if "/restaurant/detail/" not in href:
                 continue
         else:
-            if "/shop/detail/" not in absolute_url:
+            if "/shop/detail/" not in href:
                 continue
 
+        # 相対URLでも比較できるよう絶対URLへ変換
+        detail_url = urllib.parse.urljoin(
+            list_url,
+            href,
+        ).rstrip("/")
+
+        # リンク内の表示文字からエリア名を判定
         text_value = anchor.get_text(
             " ",
             strip=True,
@@ -715,50 +750,82 @@ def get_official_area_map(park_name, facility_type):
             (
                 area
                 for area in area_names
-                if text_value.startswith(area)
+                if area in text_value
             ),
             None,
         )
 
-        if not area_name:
-            continue
-
-        area_map[
-            absolute_url.rstrip("/")
-        ] = area_name
+        if area_name:
+            area_map[
+                detail_url
+            ] = area_name
 
     return area_map
 
 
-def get_row_area(
+def resolve_facility_area(
     row,
     restaurant_area_map,
     shop_area_map,
 ):
-    """施設ごとの表示用エリアを返す。"""
-    if row["type"] == "アトラクション":
-        return str(row.get("area") or "エリア未設定")
+    """
+    施設1件のエリア名を返す。
 
-    if row["type"] not in {"レストラン", "ショップ"}:
+    アトラクション:
+        既存のATTRACTION_AREASから付けたarea列を使う。
+
+    レストラン / ショップ:
+        official_links.csvで照合した公式詳細URLと、
+        公式一覧ページから作ったURL→エリア対応表を照合する。
+    """
+    facility_type = row.get("type")
+
+    # アトラクションは既存のエリア情報をそのまま使う
+    if facility_type == "アトラクション":
+        area = str(
+            row.get("area")
+            or "エリア未設定"
+        )
+        return area
+
+    if facility_type not in {
+        "レストラン",
+        "ショップ",
+    }:
         return ""
 
-    area_map = (
-        restaurant_area_map
-        if row["type"] == "レストラン"
-        else shop_area_map
+    official_info = row.get(
+        "official_info"
     )
 
-    official_info = row.get("official_info")
+    # 公式詳細URLそのものが見つかっていない施設
+    if not isinstance(
+        official_info,
+        dict,
+    ):
+        return "エリア未設定"
 
-    if isinstance(official_info, dict):
-        official_url_value = str(
-            official_info.get("url") or ""
-        ).rstrip("/")
+    official_detail_url = str(
+        official_info.get(
+            "url",
+            "",
+        )
+    ).rstrip("/")
 
-        if official_url_value in area_map:
-            return area_map[official_url_value]
+    if not official_detail_url:
+        return "エリア未設定"
 
-    return "エリア未設定"
+    # 種別ごとに使うエリア表を分ける
+    if facility_type == "レストラン":
+        area_map = restaurant_area_map
+    else:
+        area_map = shop_area_map
+
+    return area_map.get(
+        official_detail_url,
+        "エリア未設定",
+    )
+
 
 
 def match_restaurant_info(
@@ -1280,6 +1347,7 @@ def suspension_status(record):
     }
 # ------------------------------------------------------------------
 # 計算・表示情報
+# GPS・距離・表示用情報の加工
 # ------------------------------------------------------------------
 
 def scroll_to_anchor(anchor_id):
@@ -1473,6 +1541,7 @@ def balanced_score(frame):
 
 # ------------------------------------------------------------------
 # 徒歩ルート
+# Valhalla APIを使ったパーク内徒歩ルート
 # ------------------------------------------------------------------
 
 def decode_polyline6(encoded):
@@ -1562,6 +1631,7 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
 
 # ------------------------------------------------------------------
 # 地図
+# Foliumで現在地・施設・ルートを描画
 # ------------------------------------------------------------------
 
 def add_facility_marker(disney_map, row, favorites):
@@ -1725,6 +1795,7 @@ def make_route_map(route, target, location):
 
 # ------------------------------------------------------------------
 # 画面
+# ここからStreamlitのUIを組み立てる
 # ------------------------------------------------------------------
 
 st.markdown(
@@ -1803,6 +1874,8 @@ if category_page in {
         key=f"category_search_{park_name}_{category_page}",
     )
 
+    # パークごとの公式エリア一覧。
+    # アトラクション・レストラン・ショップで共通利用する。
     area_options = [
         "すべて",
         *ATTRACTION_AREAS.get(park_name, {}).keys(),
@@ -2154,17 +2227,25 @@ all_df["official_info"] = all_df.apply(
     axis=1,
 )
 
+# ------------------------------------------------------------
+# レストラン / ショップのエリア情報を取得
+# ------------------------------------------------------------
+# 公式一覧ページはそれぞれ1回だけ取得し、6時間キャッシュされる。
 restaurant_area_map = get_official_area_map(
     park_name,
     "レストラン",
 )
+
 shop_area_map = get_official_area_map(
     park_name,
     "ショップ",
 )
 
+# 全施設に表示用のarea列を付ける。
+# アトラクションは既存のarea列、
+# レストラン / ショップは公式URLから判定する。
 all_df["area"] = all_df.apply(
-    lambda row: get_row_area(
+    lambda row: resolve_facility_area(
         row,
         restaurant_area_map,
         shop_area_map,
@@ -2250,6 +2331,11 @@ if category_page in {
         )
     ]
 
+# ------------------------------------------------------------
+# エリア絞り込み
+# ------------------------------------------------------------
+# 「すべて」以外を選んだときだけ、そのエリアの施設へ絞る。
+# アトラクション / レストラン / ショップすべて共通。
 if (
     category_page in {
         "🎢 アトラクション",
@@ -2259,7 +2345,8 @@ if (
     and selected_area != "すべて"
 ):
     display_df = display_df[
-        display_df["area"] == selected_area
+        display_df["area"]
+        == selected_area
     ]
 
 if cool_only:
@@ -2593,16 +2680,21 @@ def show_facility_cards(frame, key_prefix):
                         f'<span class="badge badge-wait">{wait_text}</span>'
                     )
 
+                # 3カテゴリすべてでエリア名をカードに表示する。
                 if row["type"] in {
                     "アトラクション",
                     "レストラン",
                     "ショップ",
                 }:
                     area_name = str(
-                        row.get("area") or "エリア未設定"
+                        row.get("area")
+                        or "エリア未設定"
                     )
+
                     area_badge = (
-                        f'<span class="badge">🗺 {area_name}</span>'
+                        f'<span class="badge">'
+                        f'🗺 {area_name}'
+                        f'</span>'
                     )
 
                 st.markdown(
