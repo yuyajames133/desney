@@ -1909,6 +1909,81 @@ def make_overview_map(frame, location, favorites):
     return disney_map
 
 
+def make_filtered_facility_map(
+    frame,
+    park_name,
+    favorites,
+):
+    """
+    エリア絞り込み後の施設だけを表示する地図。
+
+    ・GPS現在地は地図の中心に使わない
+    ・現在のdisplay_dfに残っている施設だけ表示
+    ・アトラクション / レストラン / ショップすべて対応
+    ・表示施設が全部見えるよう自動ズーム
+    """
+    park_center = PARKS[
+        park_name
+    ]["center"]
+
+    disney_map = folium.Map(
+        location=park_center,
+        zoom_start=16,
+        control_scale=True,
+        dragging=True,
+        touch_zoom=True,
+        double_click_zoom=True,
+        box_zoom=True,
+        keyboard=True,
+        scroll_wheel_zoom=False,
+    )
+
+    # 緯度・経度が取れている施設だけ地図へ出す
+    map_df = frame.dropna(
+        subset=["lat", "lon"]
+    ).copy()
+
+    for _, row in map_df.iterrows():
+        add_facility_marker(
+            disney_map,
+            row,
+            favorites,
+        )
+
+    # 2件以上なら、全施設が画面内に入るよう自動調整
+    if len(map_df) >= 2:
+        bounds = [
+            [
+                float(map_df["lat"].min()),
+                float(map_df["lon"].min()),
+            ],
+            [
+                float(map_df["lat"].max()),
+                float(map_df["lon"].max()),
+            ],
+        ]
+
+        disney_map.fit_bounds(
+            bounds,
+            padding=(30, 30),
+        )
+
+    # 1件だけなら、その施設を中心に大きく表示
+    elif len(map_df) == 1:
+        only_row = map_df.iloc[0]
+
+        disney_map.location = [
+            float(only_row["lat"]),
+            float(only_row["lon"]),
+        ]
+
+        disney_map.options[
+            "zoom"
+        ] = 18
+
+    return disney_map
+
+
 def make_route_map(route, target, location):
     """選択施設までの徒歩ルート専用地図。"""
     disney_map = folium.Map(
@@ -2586,6 +2661,50 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# ============================================================
+# 選択中エリアの施設マップ
+# ============================================================
+#
+# アトラクション / レストラン / ショップで
+# エリアを「すべて」以外に絞った時だけ表示する。
+#
+# 地図に出る施設は、下の一覧に出ているdisplay_dfと同じ。
+# そのため検索・エリア・屋内・絶叫除外などの条件も反映される。
+#
+# GPS現在地は使わないので、家やホテルで開いていても
+# 選択したパーク内エリアをそのまま表示できる。
+if (
+    category_page in {
+        "🎢 アトラクション",
+        "🍽 レストラン",
+        "🛍 ショップ",
+    }
+    and selected_area != "すべて"
+):
+    if display_df.empty:
+        st.info(
+            f"🗺 {selected_area}に表示できる施設がありません。"
+        )
+    else:
+        st.markdown(
+            f"### 🗺 {selected_area} の施設マップ"
+        )
+
+        st.caption(
+            "下の施設一覧と同じ施設を地図に表示しています。"
+            "マーカーを押すと施設名を確認できます。"
+        )
+
+        folium_static(
+            make_filtered_facility_map(
+                display_df,
+                park_name,
+                favorites,
+            ),
+            width=700,
+            height=400,
+        )
 
 st.markdown(
     '<div id="page_status"></div>',
