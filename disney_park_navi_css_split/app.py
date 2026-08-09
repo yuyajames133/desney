@@ -38,6 +38,43 @@ def load_css():
 
 load_css()
 
+# カード内の補足情報が青い背景に埋もれないよう、文字と案内枠を高コントラスト化
+st.markdown(
+    """
+    <style>
+    /* 待機列・絶叫度・涼しい候補など、カード本文の文字 */
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    div[data-testid="stMarkdownContainer"] p {
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+    }
+
+    /* 無料パス・有料パスなどの情報ボックス */
+    div[data-testid="stAlert"] {
+        background: rgba(255, 255, 255, 0.94) !important;
+        border: 2px solid rgba(255, 255, 255, 0.95) !important;
+        border-radius: 14px !important;
+    }
+
+    div[data-testid="stAlert"] p,
+    div[data-testid="stAlert"] div {
+        color: #12304f !important;
+        font-weight: 800 !important;
+        text-shadow: none !important;
+    }
+
+    /* カード内のキャプションも読みやすくする */
+    div[data-testid="stVerticalBlockBorderWrapper"]
+    [data-testid="stCaptionContainer"] {
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.markdown(
     """
     <section class="hero">
@@ -610,6 +647,119 @@ def get_official_restaurant_info(park_name):
         )
 
     return records
+
+@st.cache_data(ttl=21600)
+def get_official_area_map(park_name, facility_type):
+    """
+    公式の一覧ページ1枚から、
+    レストラン/ショップのエリアを取得する。
+    個別ページを大量に開かないので軽い。
+    """
+    if facility_type not in {"レストラン", "ショップ"}:
+        return {}
+
+    list_url = PARKS[park_name]["official"].get(facility_type)
+    if not list_url:
+        return {}
+
+    area_names = list(
+        ATTRACTION_AREAS.get(park_name, {}).keys()
+    )
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) "
+            "AppleWebKit/605.1.15 Version/17.0 "
+            "Mobile/15E148 Safari/604.1"
+        ),
+        "Accept-Language": "ja-JP,ja;q=0.9",
+    }
+
+    try:
+        response = requests.get(
+            list_url,
+            headers=headers,
+            timeout=20,
+        )
+        response.raise_for_status()
+    except requests.RequestException:
+        return {}
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser",
+    )
+
+    area_map = {}
+
+    for anchor in soup.find_all("a", href=True):
+        href = anchor.get("href", "")
+        absolute_url = urllib.parse.urljoin(
+            list_url,
+            href,
+        )
+
+        if facility_type == "レストラン":
+            if "/restaurant/detail/" not in absolute_url:
+                continue
+        else:
+            if "/shop/detail/" not in absolute_url:
+                continue
+
+        text_value = anchor.get_text(
+            " ",
+            strip=True,
+        )
+
+        area_name = next(
+            (
+                area
+                for area in area_names
+                if text_value.startswith(area)
+            ),
+            None,
+        )
+
+        if not area_name:
+            continue
+
+        area_map[
+            absolute_url.rstrip("/")
+        ] = area_name
+
+    return area_map
+
+
+def get_row_area(
+    row,
+    restaurant_area_map,
+    shop_area_map,
+):
+    """施設ごとの表示用エリアを返す。"""
+    if row["type"] == "アトラクション":
+        return str(row.get("area") or "エリア未設定")
+
+    if row["type"] not in {"レストラン", "ショップ"}:
+        return ""
+
+    area_map = (
+        restaurant_area_map
+        if row["type"] == "レストラン"
+        else shop_area_map
+    )
+
+    official_info = row.get("official_info")
+
+    if isinstance(official_info, dict):
+        official_url_value = str(
+            official_info.get("url") or ""
+        ).rstrip("/")
+
+        if official_url_value in area_map:
+            return area_map[official_url_value]
+
+    return "エリア未設定"
+
 
 def match_restaurant_info(
     restaurant_name,
@@ -1653,7 +1803,6 @@ if category_page in {
         key=f"category_search_{park_name}_{category_page}",
     )
 
-if category_page == "🎢 アトラクション":
     area_options = [
         "すべて",
         *ATTRACTION_AREAS.get(park_name, {}).keys(),
@@ -1662,9 +1811,10 @@ if category_page == "🎢 アトラクション":
     selected_area = st.selectbox(
         "エリア",
         area_options,
-        key=f"attraction_area_{park_name}",
+        key=f"facility_area_{park_name}_{category_page}",
     )
 
+if category_page == "🎢 アトラクション":
     filter_col1, filter_col2 = st.columns(2)
 
     with filter_col1:
@@ -2003,6 +2153,24 @@ all_df["official_info"] = all_df.apply(
     lookup_official,
     axis=1,
 )
+
+restaurant_area_map = get_official_area_map(
+    park_name,
+    "レストラン",
+)
+shop_area_map = get_official_area_map(
+    park_name,
+    "ショップ",
+)
+
+all_df["area"] = all_df.apply(
+    lambda row: get_row_area(
+        row,
+        restaurant_area_map,
+        shop_area_map,
+    ),
+    axis=1,
+)
 def lookup_restaurant_data(row):
     if row["type"] != "レストラン":
         return None
@@ -2083,7 +2251,11 @@ if category_page in {
     ]
 
 if (
-    category_page == "🎢 アトラクション"
+    category_page in {
+        "🎢 アトラクション",
+        "🍽 レストラン",
+        "🛍 ショップ",
+    }
     and selected_area != "すべて"
 ):
     display_df = display_df[
@@ -2415,10 +2587,17 @@ def show_facility_cards(frame, key_prefix):
 
                 wait_badge = ""
                 area_badge = ""
+
                 if row["type"] == "アトラクション":
                     wait_badge = (
                         f'<span class="badge badge-wait">{wait_text}</span>'
                     )
+
+                if row["type"] in {
+                    "アトラクション",
+                    "レストラン",
+                    "ショップ",
+                }:
                     area_name = str(
                         row.get("area") or "エリア未設定"
                     )
