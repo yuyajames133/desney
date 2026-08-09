@@ -844,6 +844,107 @@ FACILITY_AREAS = {'東京ディズニーランド': {'レストラン': {'れす
 
 
 
+
+
+# ============================================================
+# アトラクション所要時間
+# ============================================================
+#
+# 東京ディズニーリゾート公式の各アトラクション詳細ページに
+# 掲載されている「所要時間」を固定データとして保持する。
+#
+# 公式ページに所要時間の記載がない施設は、無理に推測せず
+# カード・地図ともに所要時間を表示しない。
+#
+# 表示例:
+#   ⏱️ 約4分30秒
+# ============================================================
+
+ATTRACTION_DURATIONS = {'東京ディズニーランド': {'オムニバス': '約6分',
+                'ウエスタンリバー鉄道': '約15分',
+                'カリブの海賊': '約15分',
+                'ジャングルクルーズ：ワイルドライフ・エクスペディション': '約10分',
+                'スイスファミリー・ツリーハウス': '約8分30秒',
+                '魅惑のチキルーム：スティッチ・プレゼンツ“アロハ・エ・コモ・マイ！”': '約10分',
+                'カントリーベア・シアター': '約15分',
+                '蒸気船マークトウェイン号': '約15分',
+                'トムソーヤ島いかだ': '約1分30秒～3分',
+                'ビッグサンダー・マウンテン': '約4分',
+                'スプラッシュ・マウンテン': '約15分',
+                'ビーバーブラザーズのカヌー探険': '約10分',
+                'アリスのティーパーティー': '約1分30秒',
+                'イッツ・ア・スモールワールド': '約10分',
+                'キャッスルカルーセル': '約2分',
+                '白雪姫と七人のこびと': '約2分30秒',
+                'シンデレラのフェアリーテイル・ホール': '約8分',
+                '空飛ぶダンボ': '約1分30秒',
+                '美女と野獣“魔法のものがたり”': '約8分',
+                'ピーターパン空の旅': '約2分30秒',
+                'ピノキオの冒険旅行': '約2分',
+                'プーさんのハニーハント': '約4分30秒',
+                'ホーンテッドマンション': '約15分',
+                'ミッキーのフィルハーマジック': '約16分',
+                'ガジェットのゴーコースター': '約1分',
+                'グーフィーのペイント＆プレイハウス': '約1分30秒',
+                'ロジャーラビットのカートゥーンスピン': '約3分30秒',
+                'スター・ツアーズ：ザ・アドベンチャーズ・コンティニュー': '約4分30秒',
+                'スティッチ・エンカウンター': '約12分',
+                'ベイマックスのハッピーライド': '約1分30秒',
+                'モンスターズ・インク“ライド＆ゴーシーク！”': '約4分'},
+ '東京ディズニーシー': {'ヴェネツィアン・ゴンドラ': '約11分30秒',
+               'ソアリン：ファンタスティック・フライト': '約5分',
+               'ディズニーシー・トランジットスチーマーライン（メディテレーニアンハーバー）': '約7分',
+               'タートル・トーク': '約30分',
+               'タワー・オブ・テラー': '約2分',
+               'ディズニーシー・エレクトリックレールウェイ（アメリカンウォーターフロント）': '約2分30秒',
+               'ディズニーシー・トランジットスチーマーライン（アメリカンウォーターフロント）': '約13分',
+               'トイ・ストーリー・マニア！': '約7分',
+               'ビッグシティ・ヴィークル': '約10分',
+               'アクアトピア': '約2分30秒',
+               'ディズニーシー・エレクトリックレールウェイ（ポートディスカバリー）': '約2分30秒',
+               'ニモ＆フレンズ・シーライダー': '約5分',
+               'インディ・ジョーンズ・アドベンチャー：クリスタルスカルの魔宮': '約3分',
+               'ディズニーシー・トランジットスチーマーライン（ロストリバーデルタ）': '約6分',
+               'レイジングスピリッツ': '約1分30秒',
+               'アナとエルサのフローズンジャーニー': '約6分30秒',
+               'ピーターパンのネバーランドアドベンチャー': '約6分',
+               'フェアリー・ティンカーベルのビジーバギー': '約2分',
+               'ラプンツェルのランタンフェスティバル': '約5分',
+               'キャラバンカルーセル': '約2分30秒',
+               'ジャスミンのフライングカーペット': '約1分30秒',
+               'シンドバッド・ストーリーブック・ヴォヤッジ': '約10分',
+               'マジックランプシアター': '約23分',
+               'ジャンピン・ジェリーフィッシュ': '約1分',
+               'スカットルのスクーター': '約1分30秒',
+               'フランダーのフライングフィッシュコースター': '約1分',
+               'ブローフィッシュ・バルーンレース': '約1分30秒',
+               'マーメイドラグーンシアター': '約14分',
+               'ワールプール': '約1分30秒',
+               '海底2万マイル': '約5分',
+               'センター・オブ・ジ・アース': '約3分'}}
+
+
+def get_attraction_duration(park_name, attraction_name):
+    """
+    アトラクション名から公式所要時間を返す。
+    normalize_name()で表記揺れを吸収して照合する。
+    """
+    target_name = normalize_name(
+        attraction_name
+    )
+
+    attraction_map = ATTRACTION_DURATIONS.get(
+        park_name,
+        {},
+    )
+
+    for name, duration in attraction_map.items():
+        if normalize_name(name) == target_name:
+            return duration
+
+    return None
+
+
 # ============================================================
 # レストラン座席数
 # ============================================================
@@ -1799,87 +1900,169 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
 # Foliumで現在地・施設・ルートを描画
 # ------------------------------------------------------------------
 
-def add_facility_marker(disney_map, row, favorites):
-    """施設マーカーを追加する。"""
+def add_facility_marker(
+    disney_map,
+    row,
+    favorites,
+    park_name,
+):
+    """
+    施設マーカーを追加する。
+
+    通常:
+        カテゴリアイコンを表示
+        🎡 アトラクション
+        🍽️ レストラン
+        🛍️ ショップ
+
+    お気に入り:
+        icon_catalog.csvでユーザーが選んだアイコンを優先する。
+    """
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
-    type_icon = TYPE_ICONS.get(row["type"], "📍")
-    marker_text = favorites.get(entity_id, type_icon)
+
+    # 通常のマーカーは「施設カテゴリ」のアイコン
+    category_icon = TYPE_ICONS.get(
+        row["type"],
+        "📍",
+    )
+
+    # お気に入りはユーザーが選んだアイコンを優先
+    marker_text = favorites.get(
+        entity_id,
+        category_icon,
+    )
 
     wait_value = row.get("wait_time")
     status_text = str(
         row.get("状況", "情報なし")
     )
-    
+
     if status_text == "休止中":
         wait_text = "休止中"
-    
     elif status_text == "一時休止":
         wait_text = "一時休止"
-    
     elif status_text == "受付終了":
         wait_text = "受付終了"
-    
     elif pd.notna(wait_value):
         wait_text = f"{int(wait_value)}分"
-    
     else:
         wait_text = "待ち時間情報なし"
 
     display_name = row["name_ja"]
 
+    # アトラクションだけ公式所要時間を表示
+    duration_text = ""
+    if row["type"] == "アトラクション":
+        duration = get_attraction_duration(
+            park_name,
+            display_name,
+        )
+        if duration:
+            duration_text = (
+                f"所要時間：{duration}<br>"
+            )
+
     popup = f"""
     <b>{marker_text} {display_name}</b><br>
     種類：{row["type"]}<br>
+    エリア：{row.get("area", "エリア未設定")}<br>
     直線距離：{int(row["distance_m"])}m<br>
     待ち時間：{wait_text}<br>
+    {duration_text}
     """
 
-    if is_favorite:
-        marker_icon = folium.DivIcon(
-            html=f"""
-            <div style="
-                width:34px;
-                height:34px;
-                border-radius:50%;
-                background:white;
-                border:3px solid #f5b301;
-                box-shadow:0 2px 5px rgba(0,0,0,.35);
-                font-size:20px;
-                line-height:28px;
-                text-align:center;
-            ">{marker_text}</div>
-            """,
-            icon_size=(34, 34),
-            icon_anchor=(17, 17),
-        )
-    else:
-        color = {
-            "アトラクション": "red",
-            "レストラン": "green",
-            "ショップ": "purple",
-            "ランドマーク": "cadetblue",
-        }.get(row["type"], "gray")
+    # --------------------------------------------------------
+    # 絵文字をそのまま地図ピンとして表示する
+    # --------------------------------------------------------
+    # お気に入りだけ枠を金色にする。
+    border_color = (
+        "#f5b301"
+        if is_favorite
+        else {
+            "アトラクション": "#dc2626",
+            "レストラン": "#16a34a",
+            "ショップ": "#7c3aed",
+        }.get(row["type"], "#475569")
+    )
 
-        marker_icon = folium.Icon(
-            color=color,
-            icon="info-sign",
-        )
+    marker_icon = folium.DivIcon(
+        html=f"""
+        <div style="
+            width:36px;
+            height:36px;
+            border-radius:50%;
+            background:white;
+            border:3px solid {border_color};
+            box-shadow:0 2px 6px rgba(0,0,0,.35);
+            font-size:20px;
+            line-height:30px;
+            text-align:center;
+            white-space:nowrap;
+        ">{marker_text}</div>
+        """,
+        icon_size=(36, 36),
+        icon_anchor=(18, 18),
+    )
 
     folium.Marker(
-        [row["lat"], row["lon"]],
+        [
+            row["lat"],
+            row["lon"],
+        ],
         tooltip=f"{marker_text} {display_name}",
-        popup=folium.Popup(popup, max_width=300),
+        popup=folium.Popup(
+            popup,
+            max_width=320,
+        ),
         icon=marker_icon,
     ).add_to(disney_map)
 
 
-def make_overview_map(frame, location, favorites):
-    """一覧確認用の小さい地図。"""
+def make_overview_map(
+    frame,
+    location,
+    favorites,
+    park_name,
+    focus_facilities=False,
+):
+    """
+    施設一覧の地図。
+
+    focus_facilities=False:
+        従来どおりGPS現在地を中心に表示。
+
+    focus_facilities=True:
+        エリア絞り込み後の施設群を中心に表示。
+        家やホテルなどGPSがパーク外でも、
+        選択したエリアへ地図がズームする。
+    """
+    valid_frame = frame.dropna(
+        subset=["lat", "lon"]
+    ).copy()
+
+    if (
+        focus_facilities
+        and not valid_frame.empty
+    ):
+        center_lat = float(
+            valid_frame["lat"].astype(float).mean()
+        )
+        center_lon = float(
+            valid_frame["lon"].astype(float).mean()
+        )
+    else:
+        center_lat = float(
+            location["latitude"]
+        )
+        center_lon = float(
+            location["longitude"]
+        )
+
     disney_map = folium.Map(
         location=[
-            location["latitude"],
-            location["longitude"],
+            center_lat,
+            center_lon,
         ],
         zoom_start=16,
         control_scale=True,
@@ -1891,97 +2074,55 @@ def make_overview_map(frame, location, favorites):
         scroll_wheel_zoom=False,
     )
 
+    # GPS現在地は参考として地図に残す。
+    # エリア選択時のfit_boundsには含めないので、
+    # GPSがパーク外でも地図が大阪全体まで縮小されない。
     folium.Marker(
         [
             location["latitude"],
             location["longitude"],
         ],
-        tooltip="現在地",
+        tooltip="📡 GPS現在地",
         icon=folium.Icon(
             color="blue",
             icon="user",
         ),
     ).add_to(disney_map)
 
-    for _, row in frame.head(60).iterrows():
-        add_facility_marker(disney_map, row, favorites)
-
-    return disney_map
-
-
-def make_filtered_facility_map(
-    frame,
-    park_name,
-    favorites,
-):
-    """
-    エリア絞り込み後の施設だけを表示する地図。
-
-    ・GPS現在地は地図の中心に使わない
-    ・現在のdisplay_dfに残っている施設だけ表示
-    ・アトラクション / レストラン / ショップすべて対応
-    ・表示施設が全部見えるよう自動ズーム
-    """
-    park_center = PARKS[
-        park_name
-    ]["center"]
-
-    disney_map = folium.Map(
-        location=park_center,
-        zoom_start=16,
-        control_scale=True,
-        dragging=True,
-        touch_zoom=True,
-        double_click_zoom=True,
-        box_zoom=True,
-        keyboard=True,
-        scroll_wheel_zoom=False,
-    )
-
-    # 緯度・経度が取れている施設だけ地図へ出す
-    map_df = frame.dropna(
-        subset=["lat", "lon"]
-    ).copy()
-
-    for _, row in map_df.iterrows():
+    # 現在画面に出ているリストを「全部」地図へ表示する。
+    # 以前のhead(60)制限は外す。
+    for _, row in valid_frame.iterrows():
         add_facility_marker(
             disney_map,
             row,
             favorites,
+            park_name,
         )
 
-    # 2件以上なら、全施設が画面内に入るよう自動調整
-    if len(map_df) >= 2:
+    # エリアを選んだ場合は、そのエリア内施設が
+    # 画面に収まる倍率へ自動調整。
+    if (
+        focus_facilities
+        and not valid_frame.empty
+    ):
         bounds = [
             [
-                float(map_df["lat"].min()),
-                float(map_df["lon"].min()),
-            ],
-            [
-                float(map_df["lat"].max()),
-                float(map_df["lon"].max()),
-            ],
+                float(row["lat"]),
+                float(row["lon"]),
+            ]
+            for _, row in valid_frame.iterrows()
         ]
 
-        disney_map.fit_bounds(
-            bounds,
-            padding=(30, 30),
-        )
-
-    # 1件だけなら、その施設を中心に大きく表示
-    elif len(map_df) == 1:
-        only_row = map_df.iloc[0]
-
-        disney_map.location = [
-            float(only_row["lat"]),
-            float(only_row["lon"]),
-        ]
-
-        disney_map.options[
-            "zoom"
-        ] = 18
+        if len(bounds) == 1:
+            disney_map.location = bounds[0]
+        else:
+            disney_map.fit_bounds(
+                bounds,
+                padding=(25, 25),
+            )
 
     return disney_map
+
 
 
 def make_route_map(route, target, location):
@@ -2662,50 +2803,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ============================================================
-# 選択中エリアの施設マップ
-# ============================================================
-#
-# アトラクション / レストラン / ショップで
-# エリアを「すべて」以外に絞った時だけ表示する。
-#
-# 地図に出る施設は、下の一覧に出ているdisplay_dfと同じ。
-# そのため検索・エリア・屋内・絶叫除外などの条件も反映される。
-#
-# GPS現在地は使わないので、家やホテルで開いていても
-# 選択したパーク内エリアをそのまま表示できる。
-if (
-    category_page in {
-        "🎢 アトラクション",
-        "🍽 レストラン",
-        "🛍 ショップ",
-    }
-    and selected_area != "すべて"
-):
-    if display_df.empty:
-        st.info(
-            f"🗺 {selected_area}に表示できる施設がありません。"
-        )
-    else:
-        st.markdown(
-            f"### 🗺 {selected_area} の施設マップ"
-        )
-
-        st.caption(
-            "下の施設一覧と同じ施設を地図に表示しています。"
-            "マーカーを押すと施設名を確認できます。"
-        )
-
-        folium_static(
-            make_filtered_facility_map(
-                display_df,
-                park_name,
-                favorites,
-            ),
-            width=700,
-            height=400,
-        )
-
 st.markdown(
     '<div id="page_status"></div>',
     unsafe_allow_html=True,
@@ -2865,10 +2962,35 @@ if route_target:
             st.rerun()
 
 
-# 一覧地図は折りたたみ
-with st.expander("🗺️ 施設の地図を見る", expanded=False):
+# ============================================================
+# 一覧地図
+# ============================================================
+#
+# エリアを選択したとき:
+#   そのエリアで現在リストに出ている施設を地図へ自動表示。
+#   地図も選択エリアへ自動ズームする。
+#
+# 「すべて」のとき:
+#   画面を長くしすぎないよう、従来どおり折りたたみ表示。
+# ============================================================
+
+show_area_map = (
+    category_page in {
+        "🎢 アトラクション",
+        "🍽 レストラン",
+        "🛍 ショップ",
+    }
+    and selected_area != "すべて"
+)
+
+if show_area_map:
+    st.markdown(
+        f"### 🗺️ {selected_area} の施設マップ"
+    )
+
     st.caption(
-        "地図は指で移動・拡大できます。縦スクロールは地図の外側を触ってください。"
+        f"現在のリスト {len(display_df)}件を地図に表示しています。"
+        "マーカーを押すと施設情報を確認できます。"
     )
 
     folium_static(
@@ -2876,10 +2998,34 @@ with st.expander("🗺️ 施設の地図を見る", expanded=False):
             display_df,
             location,
             favorites,
+            park_name,
+            focus_facilities=True,
         ),
         width=700,
-        height=230,
+        height=300,
     )
+
+else:
+    with st.expander(
+        "🗺️ 施設の地図を見る",
+        expanded=False,
+    ):
+        st.caption(
+            "地図は指で移動・拡大できます。"
+            "縦スクロールは地図の外側を触ってください。"
+        )
+
+        folium_static(
+            make_overview_map(
+                display_df,
+                location,
+                favorites,
+                park_name,
+                focus_facilities=False,
+            ),
+            width=700,
+            height=230,
+        )
 
 
 # タブ
@@ -2951,6 +3097,7 @@ def show_facility_cards(frame, key_prefix):
                 wait_badge = ""
                 area_badge = ""
                 seat_badge = ""
+                duration_badge = ""
 
                 # ------------------------------------------------
                 # レストラン座席数
@@ -2975,6 +3122,19 @@ def show_facility_cards(frame, key_prefix):
                         f'<span class="badge badge-wait">{wait_text}</span>'
                     )
 
+                    # 東京ディズニーリゾート公式の所要時間
+                    attraction_duration = get_attraction_duration(
+                        park_name,
+                        row["name_ja"],
+                    )
+
+                    if attraction_duration:
+                        duration_badge = (
+                            f'<span class="badge">'
+                            f'⏱️ {attraction_duration}'
+                            f'</span>'
+                        )
+
                 # 3カテゴリすべてでエリア名をカードに表示する。
                 if row["type"] in {
                     "アトラクション",
@@ -2996,7 +3156,7 @@ def show_facility_cards(frame, key_prefix):
                     f"""
                     {wait_badge}
                     <span class="badge">{row["type"]}</span>
-                    {area_badge}{seat_badge}
+                    {area_badge}{duration_badge}{seat_badge}
                     <span class="badge">📍 {int(row["distance_m"])}m</span>
                     """,
                     unsafe_allow_html=True,
