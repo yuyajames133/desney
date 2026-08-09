@@ -1800,76 +1800,69 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
 # ------------------------------------------------------------------
 
 def add_facility_marker(disney_map, row, favorites):
-    """施設マーカーを追加する。"""
+    """
+    施設マーカーを追加する。
+
+    ・通常施設は、すでにある TYPE_ICONS のカテゴリ別アイコンを使う
+      アトラクション → 🎡
+      レストラン     → 🍽️
+      ショップ       → 🛍️
+
+    ・お気に入り施設は favorites.csv に保存している
+      ユーザー選択アイコンを優先し、金色の枠で分かりやすくする
+
+    ・マーカーをクリックしたときは施設名だけを表示する
+    """
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
-    type_icon = TYPE_ICONS.get(row["type"], "📍")
-    marker_text = favorites.get(entity_id, type_icon)
 
-    wait_value = row.get("wait_time")
-    status_text = str(
-        row.get("状況", "情報なし")
+    # 既存の施設タイプ設定を、そのまま地図アイコンにも使う
+    category_icon = TYPE_ICONS.get(row["type"], "📍")
+
+    # お気に入りなら、今までユーザーが選んで保存している
+    # お気に入りアイコンを優先する
+    marker_text = favorites.get(entity_id, category_icon)
+
+    # お気に入りは金枠、それ以外は施設タイプごとの枠色
+    border_color = (
+        "#f5b301"
+        if is_favorite
+        else {
+            "アトラクション": "#dc2626",
+            "レストラン": "#16a34a",
+            "ショップ": "#7c3aed",
+            "ランドマーク": "#0891b2",
+        }.get(row["type"], "#64748b")
     )
-    
-    if status_text == "休止中":
-        wait_text = "休止中"
-    
-    elif status_text == "一時休止":
-        wait_text = "一時休止"
-    
-    elif status_text == "受付終了":
-        wait_text = "受付終了"
-    
-    elif pd.notna(wait_value):
-        wait_text = f"{int(wait_value)}分"
-    
-    else:
-        wait_text = "待ち時間情報なし"
 
-    display_name = row["name_ja"]
+    # 通常施設もお気に入りも、絵文字をそのまま地図マーカーにする
+    marker_icon = folium.DivIcon(
+        html=f"""
+        <div style="
+            width:34px;
+            height:34px;
+            border-radius:50%;
+            background:white;
+            border:3px solid {border_color};
+            box-shadow:0 2px 5px rgba(0,0,0,.35);
+            font-size:20px;
+            line-height:28px;
+            text-align:center;
+            white-space:nowrap;
+        ">{marker_text}</div>
+        """,
+        icon_size=(34, 34),
+        icon_anchor=(17, 17),
+    )
 
-    popup = f"""
-    <b>{marker_text} {display_name}</b><br>
-    種類：{row["type"]}<br>
-    直線距離：{int(row["distance_m"])}m<br>
-    待ち時間：{wait_text}<br>
-    """
-
-    if is_favorite:
-        marker_icon = folium.DivIcon(
-            html=f"""
-            <div style="
-                width:34px;
-                height:34px;
-                border-radius:50%;
-                background:white;
-                border:3px solid #f5b301;
-                box-shadow:0 2px 5px rgba(0,0,0,.35);
-                font-size:20px;
-                line-height:28px;
-                text-align:center;
-            ">{marker_text}</div>
-            """,
-            icon_size=(34, 34),
-            icon_anchor=(17, 17),
-        )
-    else:
-        color = {
-            "アトラクション": "red",
-            "レストラン": "green",
-            "ショップ": "purple",
-            "ランドマーク": "cadetblue",
-        }.get(row["type"], "gray")
-
-        marker_icon = folium.Icon(
-            color=color,
-            icon="info-sign",
-        )
+    display_name = str(row["name_ja"])
 
     folium.Marker(
         [row["lat"], row["lon"]],
-        tooltip=f"{marker_text} {display_name}",
-        popup=folium.Popup(popup, max_width=300),
+        # カーソルを合わせた時も施設名だけ
+        tooltip=display_name,
+        # クリック時の大きい詳細表示をやめ、施設名だけにする
+        popup=folium.Popup(display_name, max_width=180),
         icon=marker_icon,
     ).add_to(disney_map)
 
