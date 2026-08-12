@@ -1895,21 +1895,44 @@ def suspension_status(record):
 # 自分で触るなら：スクロール方法を変える時
 # ------------------------------------------------------------------
 def scroll_to_anchor(anchor_id):
-    """再実行後に指定した画面位置へ移動する。"""
+    """
+    rerun後に指定したカード位置へ戻す。
+
+    Streamlit本体のDOMを追加・削除せず、
+    対象要素の位置を読んでscrollTo()するだけ。
+    地図などの描画で高さが後から変わることがあるので、
+    300ms / 800ms / 1400ms の3回だけ位置を合わせ直す。
+    """
     components.html(
         f"""
         <script>
-        const target = window.parent.document.getElementById(
-            {anchor_id!r}
-        );
-        if (target) {{
-            setTimeout(() => {{
-                target.scrollIntoView({{
-                    behavior: "smooth",
-                    block: "start"
+        (function() {{
+            const parentWindow = window.parent;
+            const parentDocument = parentWindow.document;
+            const anchorId = {anchor_id!r};
+
+            function moveBackToCard() {{
+                const target = parentDocument.getElementById(anchorId);
+
+                if (!target) {{
+                    return;
+                }}
+
+                const y =
+                    target.getBoundingClientRect().top
+                    + parentWindow.scrollY
+                    - 20;
+
+                parentWindow.scrollTo({{
+                    top: Math.max(0, y),
+                    behavior: "auto"
                 }});
-            }}, 250);
-        }}
+            }}
+
+            setTimeout(moveBackToCard, 300);
+            setTimeout(moveBackToCard, 800);
+            setTimeout(moveBackToCard, 1400);
+        }})();
         </script>
         """,
         height=0,
@@ -3010,6 +3033,90 @@ def render_live_route_map(
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：select_single_route()
+# 役割：
+#   「🚶 行く」を押した施設を1件ルートへ設定する。
+#
+# callbackで先にsession_stateを書き換えてから
+# Streamlit本来のrerunへ入るため、
+# ボタン内で2回目のst.rerun()を発生させない。
+# ------------------------------------------------------------------
+def select_single_route(spot_payload, card_anchor):
+    st.session_state["route_target"] = {
+        "entity_id": str(spot_payload["entity_id"]),
+        "name_ja": str(spot_payload["name_ja"]),
+        "lat": float(spot_payload["lat"]),
+        "lon": float(spot_payload["lon"]),
+    }
+
+    # rerun後はトップではなく、
+    # 押した施設カードへ戻す。
+    st.session_state["scroll_target"] = card_anchor
+
+
+# ------------------------------------------------------------------
+# 関数：toggle_multi_route_target()
+# 役割：
+#   「➕ ルート / ➖ 解除」の選択をcallbackで更新する。
+#   こちらも余分なst.rerun()を起こさない。
+# ------------------------------------------------------------------
+def toggle_multi_route_target(
+        spot_payload,
+        park_name,
+        card_anchor,
+):
+    selected_targets = [
+        target
+        for target in st.session_state.get(
+            "route_targets",
+            [],
+        )
+        if target.get("park") == park_name
+    ]
+
+    entity_id = str(spot_payload["entity_id"])
+
+    already_selected = any(
+        str(target["entity_id"]) == entity_id
+        for target in selected_targets
+    )
+
+    if already_selected:
+        new_targets = [
+            target
+            for target in selected_targets
+            if str(target["entity_id"]) != entity_id
+        ]
+    else:
+        # 最大5件
+        if len(selected_targets) >= 5:
+            return
+
+        new_targets = list(selected_targets)
+        new_targets.append(
+            {
+                "entity_id": entity_id,
+                "name_ja": str(spot_payload["name_ja"]),
+                "lat": float(spot_payload["lat"]),
+                "lon": float(spot_payload["lon"]),
+                "park": park_name,
+            }
+        )
+
+    st.session_state["route_targets"] = new_targets
+
+    # 選択内容が変わったので、前回の最適ルート計算結果は破棄。
+    st.session_state.pop(
+        "optimized_multi_route",
+        None,
+    )
+
+    # 押したカードの位置に戻す。
+    st.session_state["scroll_target"] = card_anchor
+
+
 # ======================================================================
 # ここまで 8. 地図を作る関数
 # ======================================================================
@@ -3023,6 +3130,13 @@ def render_live_route_map(
 # 画面
 # ここからStreamlitのUIを組み立てる
 # ------------------------------------------------------------------
+
+# 「⬆️ トップへ戻る」用。
+st.markdown(
+    '<div id="page_top"></div>',
+    unsafe_allow_html=True,
+)
+
 
 st.markdown(
     '<div class="park-switch-label">PARK</div>',
@@ -4253,6 +4367,23 @@ def show_facility_cards(frame, key_prefix):
         if isinstance(official_info, float) and pd.isna(official_info):
             official_info = None
 
+        # --------------------------------------------------
+        # この施設カード専用のスクロール位置。
+        # 「🚶 行く」「➕ ルート」を押した後は、
+        # トップではなくこのカードへ戻る。
+        # --------------------------------------------------
+        card_anchor = (
+            f"facility_card_{key_prefix}_{index}_"
+            f"{entity_id.replace(':', '_')}"
+        )
+
+        st.markdown(
+            f'<div id="{card_anchor}"></div>',
+            unsafe_allow_html=True,
+        )
+
+        consume_scroll_target(card_anchor)
+
         # ここから「施設1件分」のカード本体。
         with st.container(border=True):
             title_col, star_col = st.columns(
@@ -4493,21 +4624,26 @@ def show_facility_cards(frame, key_prefix):
                     st.rerun()
 
             with action2:
-                # 今まで通り、1施設だけへすぐ行く時に使う。
-                if st.button(
-                        "🚶 行く",
-                        key=f"{key_prefix}_route_{entity_id}_{index}",
-                        type="primary",
-                        use_container_width=True,
-                ):
-                    st.session_state["route_target"] = {
-                        "entity_id": str(spot_payload["entity_id"]),
-                        "name_ja": str(spot_payload["name_ja"]),
-                        "lat": float(spot_payload["lat"]),
-                        "lon": float(spot_payload["lon"]),
-                    }
-                    st.session_state["scroll_target"] = "route_section"
-                    st.rerun()
+                # --------------------------------------------------
+                # 1施設だけへ行く。
+                #
+                # callbackを使うことで、
+                # 「ボタン押下による通常rerun」+「st.rerun()」の
+                # 二重rerunをやめる。
+                #
+                # rerun後はトップではなく、この施設カードへ戻る。
+                # --------------------------------------------------
+                st.button(
+                    "🚶 行く",
+                    key=f"{key_prefix}_route_{entity_id}_{index}",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=select_single_route,
+                    args=(
+                        spot_payload,
+                        card_anchor,
+                    ),
+                )
 
             with action3:
                 # 複数ルートへ追加するためのボタン。
@@ -4528,39 +4664,22 @@ def show_facility_cards(frame, key_prefix):
                     and not already_selected
                 )
 
-                if st.button(
-                        "➖ 解除" if already_selected else "➕ ルート",
-                        key=f"{key_prefix}_multi_route_{entity_id}_{index}",
-                        disabled=route_full,
-                        use_container_width=True,
-                ):
-                    new_targets = list(selected_targets)
-
-                    if already_selected:
-                        # すでに選択済みなら、この施設だけ一覧から外す。
-                        new_targets = [
-                            target
-                            for target in new_targets
-                            if str(target["entity_id"]) != str(entity_id)
-                        ]
-                    else:
-                        # 未選択なら、この施設を複数ルートへ追加する。
-                        new_targets.append(
-                            {
-                                "entity_id": str(spot_payload["entity_id"]),
-                                "name_ja": str(spot_payload["name_ja"]),
-                                "lat": float(spot_payload["lat"]),
-                                "lon": float(spot_payload["lon"]),
-                                "park": park_name,
-                            }
-                        )
-
-                    st.session_state["route_targets"] = new_targets
-
-                    # 選択内容が変わったので、前回計算した最適ルートは無効にする。
-                    st.session_state.pop("optimized_multi_route", None)
-                    st.session_state["scroll_target"] = "multi_route_section"
-                    st.rerun()
+                # --------------------------------------------------
+                # 複数ルート追加/解除もcallbackで処理。
+                # 押した後は同じカード位置へ戻る。
+                # --------------------------------------------------
+                st.button(
+                    "➖ 解除" if already_selected else "➕ ルート",
+                    key=f"{key_prefix}_multi_route_{entity_id}_{index}",
+                    disabled=route_full,
+                    use_container_width=True,
+                    on_click=toggle_multi_route_target,
+                    args=(
+                        spot_payload,
+                        park_name,
+                        card_anchor,
+                    ),
+                )
 
             with action4:
                 if official_info:
@@ -4576,6 +4695,45 @@ def show_facility_cards(frame, key_prefix):
                         disabled=True,
                         use_container_width=True,
                     )
+
+            # --------------------------------------------------
+            # 1件ルートとして選ばれている施設だけ、
+            # 「トップへ戻る」ボタンを表示する。
+            #
+            # 全施設には出さないのでカードがごちゃつかない。
+            # HTMLのアンカー移動だけなのでst.rerun()もしない。
+            # --------------------------------------------------
+            active_single_route = (
+                route_target
+                and str(route_target.get("entity_id")) == str(entity_id)
+            )
+
+            if active_single_route:
+                st.markdown(
+                    """
+                    <a
+                        href="#page_top"
+                        style="
+                            display:block;
+                            width:100%;
+                            box-sizing:border-box;
+                            text-align:center;
+                            text-decoration:none;
+                            padding:12px 14px;
+                            margin-top:10px;
+                            margin-bottom:4px;
+                            border-radius:12px;
+                            background:rgba(255,255,255,0.92);
+                            border:1px solid rgba(30,136,229,0.35);
+                            color:#135a8d;
+                            font-weight:800;
+                        "
+                    >
+                        ⬆️ トップへ戻る
+                    </a>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
             # お気に入り登録済み施設だけアイコン変更UIを表示します。
             # お気に入りだけアイコン変更
@@ -4729,3 +4887,4 @@ st.caption(
 # ======================================================================
 # ここまで 19. 画面最下部の案内・データ出典
 # ======================================================================
+
