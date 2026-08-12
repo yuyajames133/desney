@@ -2355,7 +2355,7 @@ def add_facility_marker(disney_map, row, favorites):
 # どこで使う：一覧地図/マップタブ
 # 自分で触るなら：地図全体を変える時
 # ------------------------------------------------------------------
-def make_overview_map(frame, location, favorites):
+def make_overview_map(frame, location, favorites, favorite_frame=None):
     """一覧確認用の小さい地図。"""
 
     # ----------------------------------------------------------
@@ -2405,7 +2405,9 @@ def make_overview_map(frame, location, favorites):
         keyboard=True,
         scroll_wheel_zoom=False,
     )
-
+    # ----------------------------------------------------------
+    # GPS現在地
+    # ----------------------------------------------------------
     folium.Marker(
         [
             location["latitude"],
@@ -2417,11 +2419,45 @@ def make_overview_map(frame, location, favorites):
             icon="user",
         ),
     ).add_to(disney_map)
-
+    # ----------------------------------------------------------
+    # 今選択しているエリアの施設
+    # ----------------------------------------------------------
     for _, row in frame.head(60).iterrows():
         add_facility_marker(disney_map, row, favorites)
 
-    return disney_map
+        # ----------------------------------------------------------
+        # パーク内のお気に入りを追加
+        # ----------------------------------------------------------
+        # favorite_frameには、
+        # 今選択しているランドまたはシーのお気に入り全部を入れる。
+        if favorite_frame is not None and not favorite_frame.empty:
+
+            # すでにエリア施設として地図へ追加した施設ID
+            # 同じ施設を2重に出さないために使う。
+            displayed_ids = set(
+                frame["entity_id"]
+                .astype(str)
+                .tolist()
+            )
+
+            for _, row in favorite_frame.iterrows():
+
+                entity_id = str(
+                    row["entity_id"]
+                )
+
+                # エリア側ですでに表示済みなら追加しない
+                if entity_id in displayed_ids:
+                    continue
+
+                # お気に入り施設を地図へ追加
+                add_facility_marker(
+                    disney_map,
+                    row,
+                    favorites,
+                )
+
+        return disney_map
 
 
 # ------------------------------------------------------------------
@@ -3401,12 +3437,25 @@ if (
     st.caption(
         "このエリアにある施設を地図に表示しています。"
     )
+    # ----------------------------------------------------------
+    # 現在選択中のパークのお気に入り全部
+    # ----------------------------------------------------------
+    # all_dfには現在選択中の
+    # ランドまたはシーの施設だけが入っている。
+    #
+    # favorites.keys()に入っている施設IDと一致するものだけ抜き出す。
+    park_favorite_df = all_df[
+        all_df["entity_id"]
+        .astype(str)
+        .isin(favorites.keys())
+    ].copy()
 
     folium_static(
         make_overview_map(
             display_df,
             location,
             favorites,
+            park_favorite_df,
         ),
         width=700,
         height=230,
