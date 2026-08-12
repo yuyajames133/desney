@@ -96,7 +96,6 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 from streamlit_folium import folium_static
-from streamlit_gps_location import gps_location_button
 
 # ======================================================================
 # ここまで 1. ライブラリ読み込み
@@ -2873,20 +2872,25 @@ else:
 
 search_word = ""
 
-# 9-7. GPS現在地取得。location_rawはGPSライブラリの生データです。
-location_raw = gps_location_button(
-    buttonText="現在地を取得"
+# 9-7. 【removeChild切り分け版】
+# ----------------------------------------------------------
+# streamlit_gps_location を完全に外しています。
+#
+# 本物のGPSの代わりに、現在選択中パークの中心座標を
+# 仮の現在地として使います。
+#
+# この状態で removeChild が消えるなら、
+# streamlit_gps_location が原因候補です。
+# ----------------------------------------------------------
+location = {
+    "latitude": float(PARKS[park_name]["center"][0]),
+    "longitude": float(PARKS[park_name]["center"][1]),
+}
+
+st.warning(
+    "🧪 GPS切り分け中：この版では本物のGPSを使わず、"
+    "パーク中心を仮の現在地として使用しています。"
 )
-
-# normalize_location()でGPS生データを{latitude, longitude}へ整えます。
-location = normalize_location(location_raw)
-
-if location is None:
-    st.info(
-        "「現在地を取得」を押して、"
-        "ブラウザの位置情報を許可してください。"
-    )
-    st.stop()
 
 # ======================================================================
 # ここまで 9. ここから実際の画面処理（アプリ本体）
