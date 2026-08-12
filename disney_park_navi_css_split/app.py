@@ -2423,7 +2423,11 @@ def make_overview_map(frame, location, favorites, favorite_frame=None):
     # 今選択しているエリアの施設
     # ----------------------------------------------------------
     for _, row in frame.head(60).iterrows():
-        add_facility_marker(disney_map, row, favorites)
+        add_facility_marker(
+            disney_map,
+            row,
+            favorites,
+        )
 
         # ----------------------------------------------------------
         # パーク内のお気に入りを追加
@@ -3430,7 +3434,11 @@ if route_target:
 # 例えば「ファンタジーランド」を選択した場合は、
 # 折りたたまずに地図をそのまま表示する。
 if (
-        category_page in {"🎢 アトラクション", "🍽 レストラン", "🛍 ショップ", }
+        category_page in {
+            "🎢 アトラクション",
+            "🍽 レストラン",
+            "🛍 ショップ",
+        }
         and selected_area != "すべて"
 ):
     # 今選択しているエリア名を地図の上に表示
@@ -3448,9 +3456,26 @@ if (
     park_favorite_df = all_df[
         all_df["entity_id"]
         .astype(str)
-        .isin(favorites.keys())
+        .isin(
+            [str(favorite_id) for favorite_id in favorites.keys()]
+        )
     ].copy()
 
+    # ----------------------------------------------------------
+    # 確認用
+    # お気に入りとして何が取れているか一時表示
+    # ----------------------------------------------------------
+
+    st.write(
+        "お気に入り地図用",
+        park_favorite_df[
+            ["name_ja", "type", "area", "entity_id"]
+        ]
+    )
+
+    # ----------------------------------------------------------
+    # 地図を表示
+    # ----------------------------------------------------------
     folium_static(
         make_overview_map(
             display_df,
