@@ -1,3 +1,4 @@
+```
 # ======================================================================
 # Magic Park Navi / 学習・編集用 コメント付き版
 # ======================================================================
@@ -70,6 +71,9 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+# 複数の目的地を「どの順番で回ると短いか」比較するために使う。
+# 例：A→B→C / A→C→B ... のような全パターンを作る。
+from itertools import permutations
 
 # 外部ライブラリ：地図、表データ、HTTP通信、Streamlit画面など
 import folium
@@ -2577,6 +2581,139 @@ def make_route_map(route, target, location):
     return disney_map
 
 
+# ------------------------------------------------------------------
+# 関数：find_best_visit_order()
+# 役割：複数の目的地を、現在地から回る「短い順番」に並べ替える
+# 入力：origin（出発地点） / targets（選択した目的地一覧）
+# 出力：最適と判断した順番のlist
+# どこで使う：15番の複数ルート作成
+#
+# 【考え方】
+# 最大5件までなので、目的地の並び順を全部比較する。
+# ここではAPIを大量に呼ばないため、順番決定だけは直線距離で比較する。
+# 順番が決まった後、その順番の各区間についてValhallaで実際の徒歩経路を取る。
+# ------------------------------------------------------------------
+def find_best_visit_order(origin, targets):
+    # 目的地が0件なら何も返さない。
+    if not targets:
+        return []
+
+    best_order = None
+    best_distance = float("inf")
+
+    # permutations(targets)で、選択した施設の全ての並び順を作る。
+    for order in permutations(targets):
+        current_lat = float(origin["latitude"])
+        current_lon = float(origin["longitude"])
+        total_distance = 0.0
+
+        # 出発地点 → 1件目 → 2件目 ... の直線距離を合計する。
+        for target in order:
+            total_distance += distance_m(
+                current_lat,
+                current_lon,
+                float(target["lat"]),
+                float(target["lon"]),
+            )
+
+            # 次の区間は、今の目的地から出発する。
+            current_lat = float(target["lat"])
+            current_lon = float(target["lon"])
+
+        # 今まで見た並び順より短ければ、この順番を採用する。
+        if total_distance < best_distance:
+            best_distance = total_distance
+            best_order = list(order)
+
+    return best_order or []
+
+
+# ------------------------------------------------------------------
+# 関数：make_multi_route_map()
+# 役割：複数施設を回る徒歩ルートを1枚の地図にまとめて表示する
+# 入力：legs（区間ごとの徒歩ルート） / ordered_targets（訪問順） / origin（出発地点）
+# 出力：folium.Map
+# どこで使う：15番の複数ルート表示
+# ------------------------------------------------------------------
+def make_multi_route_map(legs, ordered_targets, origin):
+    disney_map = folium.Map(
+        location=[
+            origin["latitude"],
+            origin["longitude"],
+        ],
+        zoom_start=16,
+        control_scale=True,
+        scroll_wheel_zoom=False,
+    )
+
+    # 出発地点。GPS現在地または「今ここ」で指定した施設。
+    folium.Marker(
+        [
+            origin["latitude"],
+            origin["longitude"],
+        ],
+        tooltip="出発地点",
+        icon=folium.Icon(
+            color="blue",
+            icon="user",
+        ),
+    ).add_to(disney_map)
+
+    all_points = []
+
+    # 取得した各区間の徒歩ルートを同じ地図へ重ねる。
+    for leg in legs:
+        route_points = leg["route"].get("points") or []
+
+        if not route_points:
+            continue
+
+        all_points.extend(route_points)
+
+        folium.PolyLine(
+            route_points,
+            color="#2563eb",
+            weight=6,
+            opacity=0.85,
+            tooltip="徒歩ルート",
+        ).add_to(disney_map)
+
+    # 目的地には 1 / 2 / 3 ... の番号を付ける。
+    for number, target in enumerate(ordered_targets, start=1):
+        folium.Marker(
+            [target["lat"], target["lon"]],
+            tooltip=f"{number}. {target['name_ja']}",
+            icon=folium.DivIcon(
+                html=f'''
+                <div style="
+                    width:34px;
+                    height:34px;
+                    border-radius:50%;
+                    background:white;
+                    border:4px solid #2563eb;
+                    box-shadow:0 2px 6px rgba(0,0,0,.4);
+                    color:#12304f;
+                    font-weight:900;
+                    font-size:17px;
+                    text-align:center;
+                    line-height:27px;
+                ">{number}</div>
+                ''',
+                icon_size=(34, 34),
+                icon_anchor=(17, 17),
+            ),
+        ).add_to(disney_map)
+
+    # 全ルートが画面内に入るように自動調整する。
+    if all_points:
+        disney_map.fit_bounds(
+            all_points,
+            padding=(25, 25),
+        )
+
+    return disney_map
+
+
 # ======================================================================
 # ここまで 8. 地図を作る関数
 # ======================================================================
@@ -3334,6 +3471,17 @@ consume_scroll_target("page_status")
 current_spot = st.session_state.get("current_spot")
 route_target = st.session_state.get("route_target")
 
+# 複数ルート用。
+# 「➕ ルート」で追加した施設をlistで保存する。
+# パークを切り替えた時に別パークの目的地が混ざらないよう、
+# 現在選択中のパークだけを残す。
+route_targets = [
+    target
+    for target in st.session_state.get("route_targets", [])
+    if target.get("park") == park_name
+]
+st.session_state["route_targets"] = route_targets
+
 current_name = current_spot["name_ja"] if current_spot else "未設定"
 target_name = route_target["name_ja"] if route_target else "未設定"
 
@@ -3364,8 +3512,190 @@ st.markdown(
 # ======================================================================
 # 15. 選択中の徒歩ルート
 # ======================================================================
+# ------------------------------------------------------------------
+# 15-A. 複数施設の最適ルート
+# ------------------------------------------------------------------
+# カードの「➕ ルート」で追加した施設がroute_targetsに入る。
+# 2〜5件選んで「最適ルートを作る」を押すと、
+# GPS現在地（または「今ここ」）から回る順番を自動計算する。
+
+st.markdown(
+    '<div id="multi_route_section"></div>',
+    unsafe_allow_html=True,
+)
+consume_scroll_target("multi_route_section")
+
+if route_targets:
+    st.subheader(f"🗺️ 複数ルート候補 {len(route_targets)}件 / 5件")
+
+    # 選択中の施設名を確認できるように表示する。
+    for number, target in enumerate(route_targets, start=1):
+        st.write(f"{number}. {target['name_ja']}")
+
+    # 出発地点は、通常の1件ルートと同じ考え方。
+    # 「今ここ」があればその施設、なければGPS現在地。
+    if current_spot:
+        multi_route_origin = {
+            "latitude": current_spot["lat"],
+            "longitude": current_spot["lon"],
+        }
+        multi_origin_name = current_spot["name_ja"]
+    else:
+        multi_route_origin = location
+        multi_origin_name = "GPS現在地"
+
+    # 大阪などパーク外からValhallaへパーク内経路を要求しないよう、
+    # 既存の1件ルートと同じ10km制限をかける。
+    park_center = PARKS[park_name]["center"]
+    multi_distance_from_park = distance_m(
+        multi_route_origin["latitude"],
+        multi_route_origin["longitude"],
+        park_center[0],
+        park_center[1],
+    )
+
+    multi_col1, multi_col2 = st.columns(2)
+
+    with multi_col1:
+        if st.button(
+                "🚶 最適ルートを作る",
+                type="primary",
+                disabled=(
+                    len(route_targets) < 2
+                    or multi_distance_from_park > 10_000
+                ),
+                use_container_width=True,
+                key="make_optimized_multi_route",
+        ):
+            ordered_targets = find_best_visit_order(
+                multi_route_origin,
+                route_targets,
+            )
+
+            route_legs = []
+            start_lat = float(multi_route_origin["latitude"])
+            start_lon = float(multi_route_origin["longitude"])
+            total_distance_km = 0.0
+            total_seconds = 0.0
+
+            try:
+                with st.spinner("複数の徒歩ルートを計算しています…"):
+                    # 最適順に、出発地点→1件目→2件目...を実際の徒歩経路で取得。
+                    for target in ordered_targets:
+                        route = get_walking_route(
+                            start_lat,
+                            start_lon,
+                            target["lat"],
+                            target["lon"],
+                        )
+
+                        route_legs.append(
+                            {
+                                "target": target,
+                                "route": route,
+                            }
+                        )
+
+                        route_distance = route.get("distance_km")
+                        route_seconds = route.get("time_seconds")
+
+                        if route_distance is not None:
+                            total_distance_km += float(route_distance)
+
+                        if route_seconds is not None:
+                            total_seconds += float(route_seconds)
+
+                        # 次の区間は、今到着した施設から始める。
+                        start_lat = float(target["lat"])
+                        start_lon = float(target["lon"])
+
+                # st.rerun()後も計算結果を表示できるようsession_stateへ保存。
+                st.session_state["optimized_multi_route"] = {
+                    "park": park_name,
+                    "targets": ordered_targets,
+                    "legs": route_legs,
+                    "origin": multi_route_origin,
+                    "origin_name": multi_origin_name,
+                    "distance_km": total_distance_km,
+                    "time_seconds": total_seconds,
+                }
+                st.session_state["scroll_target"] = "multi_route_section"
+                st.rerun()
+
+            except (requests.RequestException, ValueError) as error:
+                st.error(f"複数ルートを取得できませんでした：{error}")
+
+    with multi_col2:
+        if st.button(
+                "🗑️ 選択を全部消す",
+                use_container_width=True,
+                key="clear_multi_route_targets",
+        ):
+            st.session_state["route_targets"] = []
+            st.session_state.pop("optimized_multi_route", None)
+            st.session_state["scroll_target"] = "page_status"
+            st.rerun()
+
+    if len(route_targets) < 2:
+        st.caption("あと1件以上追加すると最適ルートを作れます。")
+
+    if multi_distance_from_park > 10_000:
+        st.warning(
+            f"出発地点がパークから約{multi_distance_from_park / 1000:.0f}km離れています。"
+            "現地でGPSを取得するか、カードの「今ここ」を使ってください。"
+        )
+
+    # 保存済みの計算結果は、同じパークのものだけ表示する。
+    optimized_multi_route = st.session_state.get("optimized_multi_route")
+
+    if (
+            optimized_multi_route
+            and optimized_multi_route.get("park") == park_name
+    ):
+        st.markdown("### ✨ おすすめの回り順")
+        st.write(f"出発：{optimized_multi_route['origin_name']}")
+
+        for number, target in enumerate(
+                optimized_multi_route["targets"],
+                start=1,
+        ):
+            st.write(f"↓ {number}. {target['name_ja']}")
+
+        metric1, metric2 = st.columns(2)
+
+        with metric1:
+            st.metric(
+                "合計徒歩距離",
+                f"{optimized_multi_route['distance_km']:.2f}km",
+            )
+
+        with metric2:
+            st.metric(
+                "徒歩目安",
+                f"{math.ceil(optimized_multi_route['time_seconds'] / 60)}分",
+            )
+
+        folium_static(
+            make_multi_route_map(
+                optimized_multi_route["legs"],
+                optimized_multi_route["targets"],
+                optimized_multi_route["origin"],
+            ),
+            width=700,
+            height=360,
+        )
+
+        st.caption(
+            "訪問順は直線距離で全パターンを比較し、"
+            "表示する各区間はOpenStreetMap上の歩行可能な通路で計算しています。"
+        )
+
+
+# ------------------------------------------------------------------
+# 15-B. 今までの1件だけの徒歩ルート
+# ------------------------------------------------------------------
 # 「🚶 行く」を押すとroute_targetが入り、if route_target:の中が表示されます。
-# 選択中ルート
+# 複数ルートとは別機能なので、今まで通りそのまま使える。
 st.markdown(
     '<div id="route_section"></div>',
     unsafe_allow_html=True,
@@ -3878,7 +4208,9 @@ def show_facility_cards(frame, key_prefix):
                 "lon": float(row["lon"]),
             }
 
-            action1, action2, action3 = st.columns(3)
+            # 4つの操作ボタン。
+            # ①今ここ ②1件だけ行く ③複数ルートへ追加/解除 ④公式詳細
+            action1, action2, action3, action4 = st.columns(4)
 
             with action1:
                 if st.button(
@@ -3896,6 +4228,7 @@ def show_facility_cards(frame, key_prefix):
                     st.rerun()
 
             with action2:
+                # 今まで通り、1施設だけへすぐ行く時に使う。
                 if st.button(
                         "🚶 行く",
                         key=f"{key_prefix}_route_{entity_id}_{index}",
@@ -3912,6 +4245,59 @@ def show_facility_cards(frame, key_prefix):
                     st.rerun()
 
             with action3:
+                # 複数ルートへ追加するためのボタン。
+                # 同じ施設をもう一度押すと解除できる。最大5件。
+                selected_targets = [
+                    target
+                    for target in st.session_state.get("route_targets", [])
+                    if target.get("park") == park_name
+                ]
+
+                already_selected = any(
+                    str(target["entity_id"]) == str(entity_id)
+                    for target in selected_targets
+                )
+
+                route_full = (
+                    len(selected_targets) >= 5
+                    and not already_selected
+                )
+
+                if st.button(
+                        "➖ 解除" if already_selected else "➕ ルート",
+                        key=f"{key_prefix}_multi_route_{entity_id}_{index}",
+                        disabled=route_full,
+                        use_container_width=True,
+                ):
+                    new_targets = list(selected_targets)
+
+                    if already_selected:
+                        # すでに選択済みなら、この施設だけ一覧から外す。
+                        new_targets = [
+                            target
+                            for target in new_targets
+                            if str(target["entity_id"]) != str(entity_id)
+                        ]
+                    else:
+                        # 未選択なら、この施設を複数ルートへ追加する。
+                        new_targets.append(
+                            {
+                                "entity_id": str(spot_payload["entity_id"]),
+                                "name_ja": str(spot_payload["name_ja"]),
+                                "lat": float(spot_payload["lat"]),
+                                "lon": float(spot_payload["lon"]),
+                                "park": park_name,
+                            }
+                        )
+
+                    st.session_state["route_targets"] = new_targets
+
+                    # 選択内容が変わったので、前回計算した最適ルートは無効にする。
+                    st.session_state.pop("optimized_multi_route", None)
+                    st.session_state["scroll_target"] = "multi_route_section"
+                    st.rerun()
+
+            with action4:
                 if official_info:
                     st.link_button(
                         "公式詳細",
@@ -4095,3 +4481,5 @@ st.caption(
 # ======================================================================
 # ここまで 19. 画面最下部の案内・データ出典
 # ======================================================================
+
+```
