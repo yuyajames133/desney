@@ -2272,7 +2272,30 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
 # どこで使う：make_overview_map内
 # 自分で触るなら：ピン/色/吹き出しを変える時
 # ------------------------------------------------------------------
+AREA_COLORS = {
+    # 東京ディズニーランド
+    "ワールドバザール": "#4FC3F7",
+    "アドベンチャーランド": "#43A047",
+    "ウエスタンランド": "#8D6E63",
+    "クリッターカントリー": "#FB8C00",
+    "ファンタジーランド": "#EC407A",
+    "トゥーンタウン": "#AB47BC",
+    "トゥモローランド": "#1E88E5",
+
+    # 東京ディズニーシー
+    "メディテレーニアンハーバー": "#26A69A",
+    "アメリカンウォーターフロント": "#5C6BC0",
+    "ポートディスカバリー": "#29B6F6",
+    "ロストリバーデルタ": "#7CB342",
+    "アラビアンコースト": "#F9A825",
+    "マーメイドラグーン": "#26C6DA",
+    "ミステリアスアイランド": "#6D4C41",
+    "ファンタジースプリングス": "#BA68C8",
+}
+
 def add_facility_marker(disney_map, row, favorites):
+    area_name = str(row.get("area") or "")
+    area_color = AREA_COLORS.get(area_name, "#F4B400")
     """施設マーカーを追加する。"""
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
@@ -2316,7 +2339,7 @@ def add_facility_marker(disney_map, row, favorites):
                 height:34px;
                 border-radius:50%;
                 background:white;
-                border:3px solid #f5b301;
+                border:3px solid {area_color};
                 box-shadow:0 2px 5px rgba(0,0,0,.35);
                 font-size:20px;
                 line-height:28px;
