@@ -2365,7 +2365,7 @@ def make_overview_map(frame, location, favorites):
     # 下の条件に入らなかった場合でも
     # map_lat / map_lon が必ず存在する。
     map_lat = location["latitude"]
-    map_lot = location["longitude"]
+    map_lon = location["longitude"]
 
 
     # ----------------------------------------------------------
@@ -2385,7 +2385,7 @@ def make_overview_map(frame, location, favorites):
         # 施設の緯度の平均
         map_lat = frame["lat"].mean()
         # 施設の軽度の平均
-        map_lot = frame["lon"].mean()
+        map_lon = frame["lon"].mean()
     else:
         #施設が一件もない場合は
         #現在地を地図の中心にする
