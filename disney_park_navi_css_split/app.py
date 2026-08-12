@@ -105,6 +105,55 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # ------------------------------------------------------------------
 # 関数：load_css()
+
+
+# ------------------------------------------------------------------
+# ブラウザ自動翻訳によるReact DOM破壊を防ぐ
+# ------------------------------------------------------------------
+# Chrome/Google翻訳や一部翻訳拡張機能は、Reactが管理している
+# テキストノードを直接差し替えることがあり、その状態でStreamlitが
+# 再描画すると removeChild NotFoundError になる場合がある。
+#
+# ここではStreamlitの表示内容を日本語のまま使う前提で、
+# ページ全体を「翻訳しない」対象として指定する。
+#
+# DOMの子要素を削除・移動する処理は行わず、
+# html/bodyへの属性・class設定だけに限定する。
+def disable_browser_translation():
+    components.html(
+        """
+        <script>
+        try {
+            const doc = window.parent.document;
+
+            if (doc && doc.documentElement) {
+                doc.documentElement.setAttribute("translate", "no");
+                doc.documentElement.classList.add("notranslate");
+            }
+
+            if (doc && doc.body) {
+                doc.body.setAttribute("translate", "no");
+                doc.body.classList.add("notranslate");
+            }
+
+            if (doc && doc.head && !doc.querySelector('meta[name="google"][content="notranslate"]')) {
+                const meta = doc.createElement("meta");
+                meta.name = "google";
+                meta.content = "notranslate";
+                doc.head.appendChild(meta);
+            }
+        } catch (error) {
+            // 翻訳対策が失敗してもアプリ本体は止めない
+            console.log("notranslate setup skipped", error);
+        }
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
+
+
+disable_browser_translation()
 # 役割：style.cssを読み込んで画面へ適用する
 # 入力：入力なし
 # 出力：戻り値なし
@@ -1895,26 +1944,15 @@ def suspension_status(record):
 # 自分で触るなら：スクロール方法を変える時
 # ------------------------------------------------------------------
 def scroll_to_anchor(anchor_id):
-    """再実行後に指定した画面位置へ移動する。"""
-    components.html(
-        f"""
-        <script>
-        const target = window.parent.document.getElementById(
-            {anchor_id!r}
-        );
-        if (target) {{
-            setTimeout(() => {{
-                target.scrollIntoView({{
-                    behavior: "smooth",
-                    block: "start"
-                }});
-            }}, 250);
-        }}
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
+    """
+    再実行後の自動スクロールは安定性優先で停止。
+
+    以前はcomponents.html()からwindow.parent.documentを参照して
+    scrollIntoView()していたが、Streamlit/React側の再描画と
+    ブラウザ翻訳・拡張機能などのDOM変更が重なると
+    removeChild NotFoundErrorの切り分けが難しくなるため使用しない。
+    """
+    return
 
 
 # ------------------------------------------------------------------
@@ -2782,7 +2820,7 @@ def render_realtime_gps_map(
 
     live_html = r"""
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" translate="no" class="notranslate">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
@@ -2852,7 +2890,7 @@ html, body {
 </style>
 </head>
 
-<body>
+<body translate="no" class="notranslate">
 <div id="map"></div>
 <div id="gps-status">📡 リアルタイムGPSを開始しています…</div>
 
