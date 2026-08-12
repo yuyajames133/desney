@@ -1,19 +1,4 @@
 # ======================================================================
-# 【removeChild 切り分け版】
-#
-# この版では独自JavaScriptによる画面操作とリアルタイムGPSを外しています。
-#
-# 残しているもの
-#   ・通常のGPS取得（streamlit_gps_location）
-#   ・Folium地図の生成処理（表示コンポーネントは停止）
-#   ・1件徒歩ルート
-#   ・複数最適ルート
-#   ・エリア色ピン
-#
-# この状態でremoveChildが出るか確認するための診断版です。
-# ======================================================================
-
-# ======================================================================
 # Magic Park Navi / 学習・編集用 コメント付き版
 # ======================================================================
 # 元コードの動作は変えず、「どこで何をしているか」を追いやすいように
@@ -94,27 +79,10 @@ import folium
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
-
-
-# ------------------------------------------------------------------
-# 【removeChild切り分け用】folium_static()
-# ------------------------------------------------------------------
-# streamlit-folium のフロントエンドコンポーネントを完全に使わず、
-# 地図を表示する場所には診断メッセージだけを出す。
-#
-# Foliumで地図オブジェクトを「作る」処理自体は残しているが、
-# ブラウザへ埋め込むStreamlit-Foliumコンポーネントは呼ばれない。
-#
-# この状態でremoveChildが消えた場合、
-# streamlit-folium / folium_static が原因候補になる。
-def folium_static(*args, **kwargs):
-    st.info(
-        "🧪 地図表示を一時停止中："
-        "removeChild原因切り分けのため、"
-        "この版ではstreamlit-foliumを使用していません。"
-    )
-
+from streamlit_folium import folium_static
+from streamlit_gps_location import gps_location_button
 
 # ======================================================================
 # ここまで 1. ライブラリ読み込み
@@ -1927,13 +1895,26 @@ def suspension_status(record):
 # 自分で触るなら：スクロール方法を変える時
 # ------------------------------------------------------------------
 def scroll_to_anchor(anchor_id):
-    """
-    【切り分け版では自動スクロールを停止】
-
-    removeChild NotFoundErrorの原因切り分けを優先するため、
-    この関数は何もせず終了する。
-    """
-    return
+    """再実行後に指定した画面位置へ移動する。"""
+    components.html(
+        f"""
+        <script>
+        const target = window.parent.document.getElementById(
+            {anchor_id!r}
+        );
+        if (target) {{
+            setTimeout(() => {{
+                target.scrollIntoView({{
+                    behavior: "smooth",
+                    block: "start"
+                }});
+            }}, 250);
+        }}
+        </script>
+        """,
+        height=0,
+        width=0,
+    )
 
 
 # ------------------------------------------------------------------
@@ -2891,25 +2872,20 @@ else:
 
 search_word = ""
 
-# 9-7. 【removeChild切り分け版】
-# ----------------------------------------------------------
-# streamlit_gps_location を完全に外しています。
-#
-# 本物のGPSの代わりに、現在選択中パークの中心座標を
-# 仮の現在地として使います。
-#
-# この状態で removeChild が消えるなら、
-# streamlit_gps_location が原因候補です。
-# ----------------------------------------------------------
-location = {
-    "latitude": float(PARKS[park_name]["center"][0]),
-    "longitude": float(PARKS[park_name]["center"][1]),
-}
-
-st.warning(
-    "🧪 GPS切り分け中：この版では本物のGPSを使わず、"
-    "パーク中心を仮の現在地として使用しています。"
+# 9-7. GPS現在地取得。location_rawはGPSライブラリの生データです。
+location_raw = gps_location_button(
+    buttonText="現在地を取得"
 )
+
+# normalize_location()でGPS生データを{latitude, longitude}へ整えます。
+location = normalize_location(location_raw)
+
+if location is None:
+    st.info(
+        "「現在地を取得」を押して、"
+        "ブラウザの位置情報を許可してください。"
+    )
+    st.stop()
 
 # ======================================================================
 # ここまで 9. ここから実際の画面処理（アプリ本体）
@@ -4504,4 +4480,3 @@ st.caption(
 # ======================================================================
 # ここまで 19. 画面最下部の案内・データ出典
 # ======================================================================
-
