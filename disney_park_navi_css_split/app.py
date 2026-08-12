@@ -1,4 +1,4 @@
-#======================================================================
+# ======================================================================
 # Magic Park Navi / 学習・編集用 コメント付き版
 # ======================================================================
 # 元コードの動作は変えず、「どこで何をしているか」を追いやすいように
@@ -2412,48 +2412,26 @@ def make_overview_map(
         favorites,
         favorite_frame=None,
         center_on_current=False,
-        ):
-    """一覧確認用の小さい地図。"""
+        single_route=None,
+        single_target=None,
+        multi_route=None,
+):
+    # アプリで使う「1枚だけの地図」。
+    # 通常施設・お気に入り・1件ルート・複数最適ルートを全部ここへ重ねる。
+    # 青い現在地はrender_live_route_map()側でリアルタイム表示する。
 
-    # ----------------------------------------------------------
-    # まず現在地を地図の中心として入れておく
-    # ----------------------------------------------------------
-    # これを最初に入れておけば、
-    # 下の条件に入らなかった場合でも
-    # map_lat / map_lon が必ず存在する。
-    map_lat = location["latitude"]
-    map_lon = location["longitude"]
+    map_lat = float(location["latitude"])
+    map_lon = float(location["longitude"])
 
-    # ----------------------------------------------------------
-    # 地図の中心を決める
-    # ----------------------------------------------------------
-
-    # 現在地周辺モードなら
-    # 施設の位置ではなくGPS現在地を中心にする
     if center_on_current:
+        map_lat = float(location["latitude"])
+        map_lon = float(location["longitude"])
+    elif frame is not None and not frame.empty:
+        map_lat = float(frame["lat"].mean())
+        map_lon = float(frame["lon"].mean())
 
-        map_lat = location["latitude"]
-        map_lon = location["longitude"]
-
-
-    # 通常のエリア地図なら
-    # 表示している施設の真ん中を中心にする
-    elif not frame.empty:
-
-        map_lat = frame["lat"].mean()
-        map_lon = frame["lon"].mean()
-
-
-    # 施設がなければGPS現在地
-    else:
-
-        map_lat = location["latitude"]
-        map_lon = location["longitude"]
-
- # ----------------------------------------------------------
- # 地図を作る
- # ----------------------------------------------------------
-    disney_map = folium.Map(location=[map_lat, map_lon,],
+    disney_map = folium.Map(
+        location=[map_lat, map_lon],
         zoom_start=16,
         control_scale=True,
         dragging=True,
@@ -2463,62 +2441,142 @@ def make_overview_map(
         keyboard=True,
         scroll_wheel_zoom=False,
     )
-    # ----------------------------------------------------------
-    # GPS現在地
-    # ----------------------------------------------------------
-    folium.Marker(
-        [
-            location["latitude"],
-            location["longitude"],
-        ],
-        tooltip="現在地",
-        icon=folium.Icon(
-            color="blue",
-            icon="user",
-        ),
-    ).add_to(disney_map)
-    # ----------------------------------------------------------
-    # 今選択しているエリアの施設
-    # ----------------------------------------------------------
-    for _, row in frame.head(60).iterrows():
-        add_facility_marker(
-            disney_map,
-            row,
-            favorites,
-        )
 
-        # ----------------------------------------------------------
-        # パーク内のお気に入りを追加
-        # ----------------------------------------------------------
-        # favorite_frameには、
-        # 今選択しているランドまたはシーのお気に入り全部を入れる。
-    if favorite_frame is not None and not favorite_frame.empty:
+    displayed_ids = set()
+    bounds_points = []
 
-            # すでにエリア施設として地図へ追加した施設ID
-            # 同じ施設を2重に出さないために使う。
-            displayed_ids = set(
-                frame["entity_id"]
-                .astype(str)
-                .tolist()
+    # 通常施設はルートを出しても消さない
+    if frame is not None and not frame.empty:
+        for _, row in frame.head(100).iterrows():
+            add_facility_marker(disney_map, row, favorites)
+            displayed_ids.add(str(row["entity_id"]))
+            bounds_points.append(
+                [float(row["lat"]), float(row["lon"])]
             )
 
-            # パーク内のお気に入りを1件ずつ確認
-            for _, favorite_row in favorite_frame.iterrows():
+    # お気に入りも残す
+    if favorite_frame is not None and not favorite_frame.empty:
+        for _, favorite_row in favorite_frame.iterrows():
+            entity_id = str(favorite_row["entity_id"])
+            if entity_id in displayed_ids:
+                continue
 
-                entity_id = str(
-                    favorite_row["entity_id"]
-                )
+            add_facility_marker(
+                disney_map,
+                favorite_row,
+                favorites,
+            )
+            displayed_ids.add(entity_id)
+            bounds_points.append(
+                [
+                    float(favorite_row["lat"]),
+                    float(favorite_row["lon"]),
+                ]
+            )
 
-                # エリア側ですでに表示済みなら追加しない
-                if entity_id in displayed_ids:
-                    continue
+    # ----------------------------------------------------------
+    # 1件ルート
+    # ----------------------------------------------------------
+    if single_route is not None and single_target is not None:
+        route_points = single_route.get("points") or []
 
-                # お気に入り施設を地図へ追加
-                add_facility_marker(
-                    disney_map,
-                    favorite_row,
-                    favorites,
-                )
+        if route_points:
+            folium.PolyLine(
+                route_points,
+                color="#2563eb",
+                weight=7,
+                opacity=0.90,
+                tooltip="徒歩ルート",
+            ).add_to(disney_map)
+            bounds_points.extend(route_points)
+
+        folium.Marker(
+            [
+                float(single_target["lat"]),
+                float(single_target["lon"]),
+            ],
+            tooltip=f"目的地：{single_target['name_ja']}",
+            icon=folium.Icon(
+                color="red",
+                icon="flag",
+            ),
+        ).add_to(disney_map)
+
+        bounds_points.append(
+            [
+                float(single_target["lat"]),
+                float(single_target["lon"]),
+            ]
+        )
+
+    # ----------------------------------------------------------
+    # 複数最適ルート
+    # ----------------------------------------------------------
+    if multi_route:
+        legs = multi_route.get("legs") or []
+        targets = multi_route.get("targets") or []
+
+        for leg in legs:
+            route = leg.get("route") or {}
+            route_points = route.get("points") or []
+
+            if not route_points:
+                continue
+
+            folium.PolyLine(
+                route_points,
+                color="#2563eb",
+                weight=6,
+                opacity=0.88,
+                tooltip="最適ルート",
+            ).add_to(disney_map)
+
+            bounds_points.extend(route_points)
+
+        for number, target in enumerate(targets, start=1):
+            marker_html = (
+                '<div style="'
+                'width:34px;'
+                'height:34px;'
+                'border-radius:50%;'
+                'background:white;'
+                'border:4px solid #2563eb;'
+                'box-shadow:0 2px 6px rgba(0,0,0,.4);'
+                'color:#12304f;'
+                'font-weight:900;'
+                'font-size:17px;'
+                'text-align:center;'
+                'line-height:27px;'
+                f'">{number}</div>'
+            )
+
+            folium.Marker(
+                [
+                    float(target["lat"]),
+                    float(target["lon"]),
+                ],
+                tooltip=f"{number}. {target['name_ja']}",
+                icon=folium.DivIcon(
+                    html=marker_html,
+                    icon_size=(34, 34),
+                    icon_anchor=(17, 17),
+                ),
+            ).add_to(disney_map)
+
+            bounds_points.append(
+                [
+                    float(target["lat"]),
+                    float(target["lon"]),
+                ]
+            )
+
+    # 実GPS現在地はboundsに入れない。
+    # パーク外から試すと大阪～東京までズームアウトしてしまうため。
+    if len(bounds_points) >= 2:
+        disney_map.fit_bounds(
+            bounds_points,
+            padding=(25, 25),
+        )
 
     return disney_map
 
@@ -2938,9 +2996,11 @@ def render_live_route_map(
 
     # Folium HTMLの最後へ追加。
     # これで「別地図」ではなく、このFolium地図自身がGPS追跡する。
+    # Foliumの地図初期化scriptが作られた後にGPS scriptを実行する。
+    # 前版は</body>前だったため、map変数生成前に動いて青丸が出ない場合があった。
     map_html = map_html.replace(
-        "</body>",
-        live_script + "\n</body>",
+        "</html>",
+        live_script + "\n</html>",
     )
 
     components.html(
@@ -3750,6 +3810,10 @@ st.markdown(
 # ======================================================================
 # 15. 選択中の徒歩ルート
 # ======================================================================
+
+# 16番の「唯一の地図」に渡す1件ルート。
+single_route_for_map = None
+
 # ------------------------------------------------------------------
 # 15-A. 複数施設の最適ルート
 # ------------------------------------------------------------------
@@ -3913,23 +3977,8 @@ if route_targets:
                 f"{math.ceil(optimized_multi_route['time_seconds'] / 60)}分",
             )
 
-        # --------------------------------------------------
-        # 複数最適ルートの「この地図そのもの」の中で
-        # 青い現在地マーカーをリアルタイム移動させる。
-        # 別のGPS地図は表示しない。
-        # --------------------------------------------------
-        multi_route_map = make_multi_route_map(
-            optimized_multi_route["legs"],
-            optimized_multi_route["targets"],
-            optimized_multi_route["origin"],
-        )
-
-        render_live_route_map(
-            multi_route_map,
-            initial_location=location,
-            height=380,
-            follow_current=False,
-        )
+        # 地図はここでは増やさない。
+        # 16番の「唯一の地図」にこの最適ルートを重ねる。
 
         st.caption(
             "訪問順は直線距離で全パターンを比較し、"
@@ -4022,22 +4071,9 @@ if route_target:
                     ),
                 )
 
-            # --------------------------------------------------
-            # 選択したアトラクションへの「このルート地図」の中で
-            # 青い現在地マーカーをリアルタイム移動させる。
-            # --------------------------------------------------
-            single_route_map = make_route_map(
-                route,
-                route_target,
-                route_origin,
-            )
-
-            render_live_route_map(
-                single_route_map,
-                initial_location=location,
-                height=310,
-                follow_current=False,
-            )
+            # 地図はここでは増やさない。
+            # 計算したルートを16番の「唯一の地図」へ渡す。
+            single_route_for_map = route
 
             st.caption(
                 "OpenStreetMap上の歩行可能な通路から計算した目安です。"
@@ -4082,133 +4118,109 @@ if route_target:
 # ======================================================================
 
 # ======================================================================
-# 16. 一覧地図（折りたたみ）
+# 16. 唯一のパーク地図
 # ======================================================================
-# ----------------------------------------------------------
-# 現在地周辺モード
-# ----------------------------------------------------------
-if nearby_mode:
+# 地図はここ1枚だけ。
+# 普通の施設表示・1件ルート・複数最適ルートを同じ地図へ重ねる。
+# ======================================================================
 
-    # all_dfには現在選択中のパークの
-    # アトラクション・レストラン・ショップが全部入っている。
-    #
-    # その中から
-    # ① アトラクション
-    # ② GPS現在地から指定距離以内
-    # のものだけ取り出す。
-    nearby_attractions_df = all_df[
+st.markdown("### 🗺️ パークマップ")
+
+# 地図に残す通常施設
+if nearby_mode:
+    unified_map_df = all_df[
         (all_df["type"] == "アトラクション")
         & (all_df["distance_m"] <= nearby_radius)
     ].copy()
 
-    # 距離が近い順に並べる
-    nearby_attractions_df = nearby_attractions_df.sort_values(
+    unified_map_df = unified_map_df.sort_values(
         "distance_m"
     )
 
-    st.markdown(
-        f"### 📍 現在地から{nearby_radius}m以内"
-    )
-
-    if nearby_attractions_df.empty:
-
-        st.info(
-            f"現在地から{nearby_radius}m以内に"
-            "アトラクションはありません。"
-        )
-
-    else:
-
-        st.caption(
-            f"近くのアトラクション "
-            f"{len(nearby_attractions_df)}件"
-        )
-
-        # GPS現在地を中心に地図を表示
-        folium_static(
-            make_overview_map(
-                nearby_attractions_df,
-                location,
-                favorites,
-                center_on_current=True,
-            ),
-            width=700,
-            height=300,
-        )
-
-
-# ----------------------------------------------------------
-# 通常のエリア地図
-# ----------------------------------------------------------
-elif (
-    category_page in {
-        "🎢 アトラクション",
-        "🍽 レストラン",
-        "🛍 ショップ",
-    }
-    and selected_area != "すべて"
-):
-    # 今選択しているエリア名を地図の上に表示
-    st.markdown(f"### 🗺️ {selected_area}の地図")
     st.caption(
-        "このエリアにある施設を地図に表示しています。"
+        f"現在地から{nearby_radius}m以内の施設と、"
+        "選択中ルートを同じ地図に表示しています。"
     )
-    # ----------------------------------------------------------
-    # 現在選択中のパークのお気に入り全部
-    # ----------------------------------------------------------
-    # all_dfには現在選択中の
-    # ランドまたはシーの施設だけが入っている。
-    #
-    # favorites.keys()に入っている施設IDと一致するものだけ抜き出す。
-    park_favorite_df = all_df[
-        all_df["entity_id"]
-        .astype(str)
-        .isin(
-            [str(favorite_id) for favorite_id in favorites.keys()]
-        )
-    ].copy()
 
-    # ----------------------------------------------------------
-    # 確認用
-    # お気に入りとして何が取れているか一時表示
-    # ----------------------------------------------------------
-    # st.write(
-    #     "favoritesの中身",
-    #     favorites
-    # )
-    # st.write(
-    #     "お気に入り地図用",
-    #     park_favorite_df[
-    #         ["name_ja", "type", "area", "entity_id"]
-    #     ]
-    # )
-
-    # ----------------------------------------------------------
-    # 地図を表示
-    # ----------------------------------------------------------
-    folium_static(
-        make_overview_map(
-            display_df,
-            location,
-            favorites,
-            park_favorite_df,
-        ),
-        width=700,
-        height=230,
-    )
-# ----------------------------------------------------------
-# エリアが「すべて」の場合
-# ----------------------------------------------------------
 else:
-    # 全施設の場合は地図が大きくなるので、
-    # 今まで通り折りたたみ式にする。
-    with st.expander("🗺️ 施設の地図を見る", expanded=False, ):
-        folium_static(make_overview_map(display_df, location, favorites, ),
-                      width=700, height=230, )
+    # ルートを出してもdisplay_dfの施設ピンは消さない
+    unified_map_df = display_df.copy()
 
+    if selected_area != "すべて":
+        st.caption(
+            f"{selected_area}の施設を残したまま、"
+            "ルートを同じ地図に重ねています。"
+        )
+    else:
+        st.caption(
+            "施設を残したまま、"
+            "ルートを同じ地図に重ねています。"
+        )
+
+# パーク内のお気に入り全部
+park_favorite_df = all_df[
+    all_df["entity_id"]
+    .astype(str)
+    .isin(
+        [str(favorite_id) for favorite_id in favorites.keys()]
+    )
+].copy()
+
+# 複数最適ルート
+multi_route_for_map = st.session_state.get(
+    "optimized_multi_route"
+)
+
+if not (
+    multi_route_for_map
+    and multi_route_for_map.get("park") == park_name
+):
+    multi_route_for_map = None
+
+# 唯一の地図
+unified_map = make_overview_map(
+    unified_map_df,
+    location,
+    favorites,
+    favorite_frame=park_favorite_df,
+    center_on_current=nearby_mode,
+    single_route=single_route_for_map,
+    single_target=(
+        route_target
+        if single_route_for_map is not None
+        else None
+    ),
+    multi_route=multi_route_for_map,
+)
+
+# 青い現在地は「ピン」ではなく青丸だけ。
+# 同じ地図の中でwatchPosition()に合わせて移動する。
+render_live_route_map(
+    unified_map,
+    initial_location=location,
+    height=430,
+    follow_current=False,
+)
+
+# パーク外からのテスト時だけ説明
+park_center = PARKS[park_name]["center"]
+gps_distance_from_park = distance_m(
+    location["latitude"],
+    location["longitude"],
+    park_center[0],
+    park_center[1],
+)
+
+if gps_distance_from_park > 10_000:
+    st.caption(
+        f"※ 今の実GPSはパークから約"
+        f"{gps_distance_from_park / 1000:.0f}km離れています。"
+        "地図はパークを拡大表示するため、青い現在地は画面外です。"
+        "現地ではこの同じ地図内に青丸が表示されて動きます。"
+    )
 
 # ======================================================================
-# ここまで 16. 一覧地図（折りたたみ）
+# ここまで 16. 唯一のパーク地図
 # ======================================================================
 
 # ======================================================================
@@ -4688,29 +4700,12 @@ if category_page == "⭐ 行きたい":
             key_prefix="favorite",
         )
 
-# 「🗺 マップ」はカードではなくdisplay_dfを大きめ地図へ渡します。
+# 「🗺 マップ」タブでも2枚目の地図は追加しない。
+# 地図は16番の「唯一のパーク地図」だけ。
 if category_page == "🗺 マップ":
-    st.markdown("### 🗺 施設マップ")
-    st.caption(
-        "マーカーを押すと施設名を確認できます。"
-        "地図は指で移動・拡大できます。"
+    st.info(
+        "上のパークマップに施設・現在地・ルートをまとめて表示しています。"
     )
-
-    folium_static(
-        make_overview_map(
-            display_df,
-            location,
-            favorites,
-        ),
-        width=700,
-        height=430,
-    )
-
-    route_map_target = st.session_state.get("route_target")
-    if route_map_target:
-        st.info(
-            f"次の目的地：{route_map_target['name_ja']}"
-        )
 
 # ======================================================================
 # ここまで 18. 選択カテゴリに応じてカード / お気に入り / 地図を実際に表示
@@ -4734,4 +4729,3 @@ st.caption(
 # ======================================================================
 # ここまで 19. 画面最下部の案内・データ出典
 # ======================================================================
-
