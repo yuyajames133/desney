@@ -2369,6 +2369,30 @@ def add_facility_marker(disney_map, row, favorites):
             icon_size=(28, 28),
             icon_anchor=(14, 14),
         )
+    # ----------------------------------------------------------
+    # 作ったmarker_iconを実際に地図へ追加する
+    # ----------------------------------------------------------
+    # お気に入りでも普通の施設でも、
+    # 上で作ったmarker_iconをここで共通して使用する。
+    folium.Marker(
+        [row["lat"], row["lon"]],
+
+        # ピンに触れたときに施設名を表示
+        tooltip=f"{marker_text} {display_name}",
+
+        # ピンを押したときの詳細表示
+        popup=folium.Popup(
+            popup,
+            max_width=300,
+        ),
+
+        # 上で作った
+        # ・お気に入りアイコン
+        # ・エリア色アイコン
+        # のどちらかを使用
+        icon=marker_icon,
+
+    ).add_to(disney_map)
 
 
 # ------------------------------------------------------------------
