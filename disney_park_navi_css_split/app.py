@@ -1,4 +1,19 @@
 # ======================================================================
+# 【removeChild 切り分け版】
+#
+# この版では独自JavaScriptによる画面操作とリアルタイムGPSを外しています。
+#
+# 残しているもの
+#   ・通常のGPS取得（streamlit_gps_location）
+#   ・Folium地図（folium_static）
+#   ・1件徒歩ルート
+#   ・複数最適ルート
+#   ・エリア色ピン
+#
+# この状態でremoveChildが出るか確認するための診断版です。
+# ======================================================================
+
+# ======================================================================
 # Magic Park Navi / 学習・編集用 コメント付き版
 # ======================================================================
 # 元コードの動作は変えず、「どこで何をしているか」を追いやすいように
@@ -79,7 +94,6 @@ import folium
 import pandas as pd
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 from streamlit_folium import folium_static
 from streamlit_gps_location import gps_location_button
@@ -105,55 +119,6 @@ BASE_DIR = Path(__file__).resolve().parent
 
 # ------------------------------------------------------------------
 # 関数：load_css()
-
-
-# ------------------------------------------------------------------
-# ブラウザ自動翻訳によるReact DOM破壊を防ぐ
-# ------------------------------------------------------------------
-# Chrome/Google翻訳や一部翻訳拡張機能は、Reactが管理している
-# テキストノードを直接差し替えることがあり、その状態でStreamlitが
-# 再描画すると removeChild NotFoundError になる場合がある。
-#
-# ここではStreamlitの表示内容を日本語のまま使う前提で、
-# ページ全体を「翻訳しない」対象として指定する。
-#
-# DOMの子要素を削除・移動する処理は行わず、
-# html/bodyへの属性・class設定だけに限定する。
-def disable_browser_translation():
-    components.html(
-        """
-        <script>
-        try {
-            const doc = window.parent.document;
-
-            if (doc && doc.documentElement) {
-                doc.documentElement.setAttribute("translate", "no");
-                doc.documentElement.classList.add("notranslate");
-            }
-
-            if (doc && doc.body) {
-                doc.body.setAttribute("translate", "no");
-                doc.body.classList.add("notranslate");
-            }
-
-            if (doc && doc.head && !doc.querySelector('meta[name="google"][content="notranslate"]')) {
-                const meta = doc.createElement("meta");
-                meta.name = "google";
-                meta.content = "notranslate";
-                doc.head.appendChild(meta);
-            }
-        } catch (error) {
-            // 翻訳対策が失敗してもアプリ本体は止めない
-            console.log("notranslate setup skipped", error);
-        }
-        </script>
-        """,
-        height=0,
-        width=0,
-    )
-
-
-disable_browser_translation()
 # 役割：style.cssを読み込んで画面へ適用する
 # 入力：入力なし
 # 出力：戻り値なし
@@ -1945,12 +1910,10 @@ def suspension_status(record):
 # ------------------------------------------------------------------
 def scroll_to_anchor(anchor_id):
     """
-    再実行後の自動スクロールは安定性優先で停止。
+    【切り分け版では自動スクロールを停止】
 
-    以前はcomponents.html()からwindow.parent.documentを参照して
-    scrollIntoView()していたが、Streamlit/React側の再描画と
-    ブラウザ翻訳・拡張機能などのDOM変更が重なると
-    removeChild NotFoundErrorの切り分けが難しくなるため使用しない。
+    removeChild NotFoundErrorの原因切り分けを優先するため、
+    この関数は何もせず終了する。
     """
     return
 
@@ -2751,351 +2714,6 @@ def make_multi_route_map(legs, ordered_targets, origin):
     return disney_map
 
 
-
-# ------------------------------------------------------------------
-# 関数：render_realtime_gps_map()
-# 役割：Streamlit本体とは独立したLeaflet地図でGPSをリアルタイム追跡
-# 入力：最初のGPS位置 / 1件目的地 / 複数ルート / 追従ON/OFF
-# 出力：components.html()で独立地図を表示
-# どこで使う：14. 現在の状態の直後
-#
-# 【重要】
-# folium地図のDOMをJavaScriptで直接変更すると、
-# Streamlitの再描画とぶつかって removeChild NotFoundError が出ることがある。
-#
-# この関数ではStreamlit本体のDOMやfolium_static()を一切変更せず、
-# components.html()の専用iframeの中だけでLeaflet地図を動かす。
-# GPS更新でもst.rerun()しないため、歩いても画面全体は再実行されない。
-# ------------------------------------------------------------------
-def render_realtime_gps_map(
-        location,
-        route_target=None,
-        optimized_multi_route=None,
-        follow_current=True,
-):
-    """独立Leaflet地図で現在地マーカーだけをリアルタイム更新する。"""
-
-    config = {
-        "latitude": float(location["latitude"]),
-        "longitude": float(location["longitude"]),
-        "follow_current": bool(follow_current),
-        "single_target": None,
-        "multi_targets": [],
-        "multi_route_points": [],
-    }
-
-    if route_target:
-        config["single_target"] = {
-            "name": str(route_target["name_ja"]),
-            "lat": float(route_target["lat"]),
-            "lon": float(route_target["lon"]),
-        }
-
-    if optimized_multi_route:
-        config["multi_targets"] = [
-            {
-                "name": str(target["name_ja"]),
-                "lat": float(target["lat"]),
-                "lon": float(target["lon"]),
-            }
-            for target in optimized_multi_route.get("targets", [])
-        ]
-
-        for leg in optimized_multi_route.get("legs", []):
-            route = leg.get("route") or {}
-            points = route.get("points") or []
-
-            if points:
-                config["multi_route_points"].append(
-                    [
-                        [float(point[0]), float(point[1])]
-                        for point in points
-                    ]
-                )
-
-    config_json = json.dumps(
-        config,
-        ensure_ascii=False,
-    )
-
-    live_html = r"""
-<!DOCTYPE html>
-<html lang="ja" translate="no" class="notranslate">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-
-<style>
-html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    background: transparent;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-#map {
-    width: 100%;
-    height: 390px;
-    border-radius: 16px;
-    overflow: hidden;
-}
-
-#gps-status {
-    position: absolute;
-    z-index: 1000;
-    top: 10px;
-    left: 50px;
-    right: 10px;
-    background: rgba(255,255,255,.94);
-    color: #12304f;
-    border-radius: 12px;
-    padding: 8px 10px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.22);
-    font-size: 13px;
-    font-weight: 700;
-    pointer-events: none;
-}
-
-.current-dot {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #1976d2;
-    border: 4px solid white;
-    box-shadow:
-        0 0 0 3px rgba(25,118,210,.28),
-        0 2px 6px rgba(0,0,0,.4);
-}
-
-.route-number {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: white;
-    border: 4px solid #2563eb;
-    box-shadow: 0 2px 6px rgba(0,0,0,.35);
-    color: #12304f;
-    font-size: 15px;
-    font-weight: 900;
-    line-height: 22px;
-    text-align: center;
-}
-</style>
-</head>
-
-<body translate="no" class="notranslate">
-<div id="map"></div>
-<div id="gps-status">📡 リアルタイムGPSを開始しています…</div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-<script>
-const config = __CONFIG__;
-
-const map = L.map("map", {
-    zoomControl: true,
-    attributionControl: true
-}).setView(
-    [config.latitude, config.longitude],
-    18
-);
-
-L.tileLayer(
-    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {
-        maxZoom: 20,
-        attribution: "&copy; OpenStreetMap contributors"
-    }
-).addTo(map);
-
-const currentIcon = L.divIcon({
-    className: "",
-    html: '<div class="current-dot"></div>',
-    iconSize: [26, 26],
-    iconAnchor: [13, 13]
-});
-
-const currentMarker = L.marker(
-    [config.latitude, config.longitude],
-    {
-        icon: currentIcon,
-        zIndexOffset: 2000
-    }
-).addTo(map);
-
-currentMarker.bindTooltip("現在地");
-
-const accuracyCircle = L.circle(
-    [config.latitude, config.longitude],
-    {
-        radius: 0,
-        weight: 1,
-        opacity: 0.35,
-        fillOpacity: 0.08
-    }
-).addTo(map);
-
-if (config.single_target) {
-    L.marker(
-        [
-            config.single_target.lat,
-            config.single_target.lon
-        ]
-    )
-    .addTo(map)
-    .bindTooltip(
-        "目的地：" + config.single_target.name
-    );
-}
-
-config.multi_targets.forEach((target, index) => {
-    const number = index + 1;
-
-    const numberIcon = L.divIcon({
-        className: "",
-        html:
-            '<div class="route-number">' +
-            number +
-            '</div>',
-        iconSize: [38, 38],
-        iconAnchor: [19, 19]
-    });
-
-    L.marker(
-        [target.lat, target.lon],
-        {
-            icon: numberIcon,
-            zIndexOffset: 1000
-        }
-    )
-    .addTo(map)
-    .bindTooltip(
-        number + ". " + target.name
-    );
-});
-
-config.multi_route_points.forEach(points => {
-    L.polyline(
-        points,
-        {
-            weight: 6,
-            opacity: 0.85
-        }
-    ).addTo(map);
-});
-
-const statusBox = document.getElementById("gps-status");
-let watchId = null;
-let firstLivePosition = true;
-
-function updatePosition(position) {
-    const lat = position.coords.latitude;
-    const lon = position.coords.longitude;
-    const accuracy = position.coords.accuracy || 0;
-
-    currentMarker.setLatLng([lat, lon]);
-
-    accuracyCircle.setLatLng([lat, lon]);
-    accuracyCircle.setRadius(accuracy);
-
-    statusBox.textContent =
-        "📡 現在地を追跡中　精度：約" +
-        Math.round(accuracy) +
-        "m";
-
-    if (firstLivePosition || config.follow_current) {
-        map.panTo(
-            [lat, lon],
-            {
-                animate: true,
-                duration: 0.4
-            }
-        );
-    }
-
-    firstLivePosition = false;
-}
-
-function gpsError(error) {
-    let message = "位置情報を取得できませんでした。";
-
-    if (error && error.code === 1) {
-        message = "位置情報の利用が許可されていません。";
-    } else if (error && error.code === 2) {
-        message = "現在地を特定できませんでした。";
-    } else if (error && error.code === 3) {
-        message = "現在地取得がタイムアウトしました。";
-    }
-
-    statusBox.textContent = "⚠️ " + message;
-}
-
-const geo =
-    window.parent &&
-    window.parent.navigator &&
-    window.parent.navigator.geolocation
-        ? window.parent.navigator.geolocation
-        : navigator.geolocation;
-
-if (geo) {
-    watchId = geo.watchPosition(
-        updatePosition,
-        gpsError,
-        {
-            enableHighAccuracy: true,
-            maximumAge: 1000,
-            timeout: 15000
-        }
-    );
-} else {
-    statusBox.textContent =
-        "⚠️ このブラウザは位置情報に対応していません。";
-}
-
-function cleanupGpsWatch() {
-    if (geo && watchId !== null) {
-        geo.clearWatch(watchId);
-        watchId = null;
-    }
-}
-
-window.addEventListener(
-    "pagehide",
-    cleanupGpsWatch
-);
-
-window.addEventListener(
-    "beforeunload",
-    cleanupGpsWatch
-);
-
-setTimeout(() => {
-    map.invalidateSize();
-}, 200);
-</script>
-</body>
-</html>
-"""
-
-    live_html = live_html.replace(
-        "__CONFIG__",
-        config_json,
-    )
-
-    components.html(
-        live_html,
-        height=410,
-        scrolling=False,
-    )
-
-
 # ======================================================================
 # ここまで 8. 地図を作る関数
 # ======================================================================
@@ -3269,32 +2887,6 @@ if location is None:
         "ブラウザの位置情報を許可してください。"
     )
     st.stop()
-
-
-# ----------------------------------------------------------
-# リアルタイムGPS地図
-# ----------------------------------------------------------
-# GPS更新のたびにStreamlitをrerunせず、
-# 専用Leaflet地図の青い現在地マーカーだけを動かす。
-realtime_gps_map = st.toggle(
-    "🛰 リアルタイム現在地マップ",
-    value=False,
-    key=f"realtime_gps_map_{park_name}",
-)
-
-if realtime_gps_map:
-    follow_realtime_gps = st.toggle(
-        "🎯 地図も現在地に追従",
-        value=True,
-        key=f"follow_realtime_gps_{park_name}",
-    )
-
-    st.caption(
-        "歩くと青い現在地マーカーが自動で動きます。"
-        "GPS更新では画面全体を再読み込みしません。"
-    )
-else:
-    follow_realtime_gps = True
 
 # ======================================================================
 # ここまで 9. ここから実際の画面処理（アプリ本体）
@@ -3912,24 +3504,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
-
-# ----------------------------------------------------------
-# 独立リアルタイムGPS地図を表示
-# ----------------------------------------------------------
-# 1件ルートの目的地があれば目的地ピンも表示。
-# 複数最適ルートを作成済みなら、その順番と経路線も表示。
-if realtime_gps_map:
-    st.markdown("### 🛰 リアルタイム現在地")
-
-    render_realtime_gps_map(
-        location=location,
-        route_target=route_target,
-        optimized_multi_route=st.session_state.get(
-            "optimized_multi_route"
-        ),
-        follow_current=follow_realtime_gps,
-    )
 
 # ======================================================================
 # ここまで 14. 現在の状態（GPS / 今いる施設 / 次の目的地）
