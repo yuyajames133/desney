@@ -2365,7 +2365,7 @@ def make_overview_map(frame, location, favorites):
     # 下の条件に入らなかった場合でも
     # map_lat / map_lon が必ず存在する。
     map_lat = location["latitude"]
-    map_lon = location["longitude"]
+    map_lot = location["longitude"]
 
 
     # ----------------------------------------------------------
@@ -3414,12 +3414,12 @@ if (
 # ----------------------------------------------------------
 # エリアが「すべて」の場合
 # ----------------------------------------------------------
-# else:
-#     # 全施設の場合は地図が大きくなるので、
-#     # 今まで通り折りたたみ式にする。
-#     with st.expander("🗺️ 施設の地図を見る", expanded=False, ):
-#         folium_static(make_overview_map(display_df, location, favorites, ),
-#                       width=700, height=230, )
+else:
+    # 全施設の場合は地図が大きくなるので、
+    # 今まで通り折りたたみ式にする。
+    with st.expander("🗺️ 施設の地図を見る", expanded=False, ):
+        folium_static(make_overview_map(display_df, location, favorites, ),
+                      width=700, height=230, )
 
 
 # ======================================================================
