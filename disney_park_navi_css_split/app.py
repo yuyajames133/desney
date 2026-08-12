@@ -5,7 +5,7 @@
 #
 # 残しているもの
 #   ・通常のGPS取得（streamlit_gps_location）
-#   ・Folium地図（folium_static）
+#   ・Folium地図の生成処理（表示コンポーネントは停止）
 #   ・1件徒歩ルート
 #   ・複数最適ルート
 #   ・エリア色ピン
@@ -95,7 +95,26 @@ import pandas as pd
 import requests
 import streamlit as st
 from bs4 import BeautifulSoup
-from streamlit_folium import folium_static
+
+
+# ------------------------------------------------------------------
+# 【removeChild切り分け用】folium_static()
+# ------------------------------------------------------------------
+# streamlit-folium のフロントエンドコンポーネントを完全に使わず、
+# 地図を表示する場所には診断メッセージだけを出す。
+#
+# Foliumで地図オブジェクトを「作る」処理自体は残しているが、
+# ブラウザへ埋め込むStreamlit-Foliumコンポーネントは呼ばれない。
+#
+# この状態でremoveChildが消えた場合、
+# streamlit-folium / folium_static が原因候補になる。
+def folium_static(*args, **kwargs):
+    st.info(
+        "🧪 地図表示を一時停止中："
+        "removeChild原因切り分けのため、"
+        "この版ではstreamlit-foliumを使用していません。"
+    )
+
 
 # ======================================================================
 # ここまで 1. ライブラリ読み込み
