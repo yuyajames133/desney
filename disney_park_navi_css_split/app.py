@@ -2357,11 +2357,33 @@ def add_facility_marker(disney_map, row, favorites):
 # ------------------------------------------------------------------
 def make_overview_map(frame, location, favorites):
     """一覧確認用の小さい地図。"""
-    disney_map = folium.Map(
-        location=[
-            location["latitude"],
-            location["longitude"],
-        ],
+# ----------------------------------------------------------
+# 地図の中心位置を決める
+# ----------------------------------------------------------
+# frameには、今画面に表示している施設だけが入っている。
+#
+# 例えば
+# 「ワールドバザール」を選んだ場合は、
+# frameにはワールドバザールの施設だけが入っている。
+#
+# その施設たちの緯度・経度の平均を出して、
+# そこを地図の中心にする。
+
+    if not frame.empty:
+        # 施設の緯度の平均
+        map_lat = frame["lat"].mean()
+        # 施設の軽度の平均
+        map_lat = frame["lon"].mean()
+    else:
+        #施設が一件もない場合は
+        #現在地を地図の中心にする
+        map_lat = location["latitude"],
+        map_lon = location["longitude"],
+
+ # ----------------------------------------------------------
+ # 地図を作る
+ # ----------------------------------------------------------
+    disney_map = folium.Map(location=[map_lat, map_lon,],
         zoom_start=16,
         control_scale=True,
         dragging=True,
