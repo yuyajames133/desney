@@ -1,3 +1,66 @@
+# ======================================================================
+# Magic Park Navi / 学習・編集用 コメント付き版
+# ======================================================================
+# 元コードの動作は変えず、「どこで何をしているか」を追いやすいように
+# 説明コメントを追加した版です。
+#
+# 【全体の地図 / この番号をそのまま本文で追ってください】
+# 1. ライブラリ読み込み
+# 2. Streamlitページ設定・見た目
+# 3. 基本設定・固定データ
+# 4. CSV・お気に入り関係
+# 5. API取得・公式情報の照合
+# 6. 計算・表示情報の加工
+# 7. 徒歩ルート関係
+# 8. 地図を作る関数
+# 9. ここから実際の画面処理（アプリ本体）
+# 10. API / CSVから元データを集める
+# 11. attraction_df + poi_df → all_df（全施設）
+# 12. all_df → display_df（今、画面に出す施設）
+# 13. display_dfを並べ替える
+# 14. 現在の状態（GPS / 今いる施設 / 次の目的地）
+# 15. 選択中の徒歩ルート
+# 16. 一覧地図（折りたたみ）
+# 17. 施設カード表示
+# 18. 選択カテゴリに応じてカード / お気に入り / 地図を実際に表示
+# 19. 画面最下部の案内・データ出典
+#
+# ※ 本文では、各章の最初と最後に同じ番号・同じ名前を書いています。
+#    例：# 5. API取得... から # ここまで 5. API取得... までが1セットです。
+#
+# 【DataFrameの役割】
+# attraction_df : アトラクションだけの表
+#                 ThemeParks.wiki + CSV補助情報 + 待ち時間 + 休止情報
+# poi_df        : OpenStreetMapから取得したレストラン / ショップの表
+# all_df        : attraction_df と poi_df を合体した「全施設」の表
+# display_df    : all_dfを現在の検索・カテゴリ・エリア条件で絞った表示用の表
+# favorite_df   : お気に入り施設だけの表
+#
+# 【session_stateで覚えているもの】
+# current_spot  : 「📍 今ここ」で指定した現在いる施設
+# route_target  : 「🚶 行く」で指定した次の目的地
+# scroll_target : st.rerun()後に画面のどこへ戻るか
+#
+# 【自分で直したい場所の早見表】
+# 見た目               → style.css / 冒頭CSS / show_facility_cards()
+# パーク基本情報       → PARKS
+# アトラクションエリア → ATTRACTION_AREAS
+# レストラン等エリア   → FACILITY_AREAS
+# レストラン座席数     → RESTAURANT_SEATS
+# 待ち時間/API         → get_attractions() / get_live_data()
+# レストラン/ショップ  → get_osm_pois()
+# 検索・絞り込み       → display_dfを作る部分
+# 並べ替え             → sort_mode / balanced_score()
+# 地図ピン             → add_facility_marker()
+# 徒歩ルート           → get_walking_route() / make_route_map()
+# 施設カード           → show_facility_cards()
+# お気に入り           → load_favorites() / save_favorites() / toggle_favorite()
+# ======================================================================
+
+# ======================================================================
+# 1. ライブラリ読み込み
+# ======================================================================
+# 標準ライブラリ：JSON、計算、URL、正規表現、文字正規化、日付、並列処理など
 import json
 import math
 import urllib.parse
@@ -8,6 +71,7 @@ from pathlib import Path
 from datetime import date, datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# 外部ライブラリ：地図、表データ、HTTP通信、Streamlit画面など
 import folium
 import pandas as pd
 import requests
@@ -19,6 +83,14 @@ from streamlit_gps_location import gps_location_button
 
 
 
+# ======================================================================
+# ここまで 1. ライブラリ読み込み
+# ======================================================================
+
+# ======================================================================
+# 2. Streamlitページ設定・見た目
+# ======================================================================
+# ブラウザのタブ名・アイコン・ページ幅を設定します。
 st.set_page_config(
     page_title="Magic Park Navi",
     page_icon="🏰",
@@ -26,8 +98,19 @@ st.set_page_config(
 )
 
 
+# BASE_DIR = このapp.py自身が置いてあるフォルダ。
+# CSVやstyle.cssを「app.pyと同じ場所」から探すための基準です。
 BASE_DIR = Path(__file__).resolve().parent
 
+
+# ------------------------------------------------------------------
+# 関数：load_css()
+# 役割：style.cssを読み込んで画面へ適用する
+# 入力：入力なし
+# 出力：戻り値なし
+# どこで使う：アプリ起動直後
+# 自分で触るなら：CSSファイル名や読み込み方法を変える時
+# ------------------------------------------------------------------
 def load_css():
     css_path = BASE_DIR / "style.css"
     if css_path.exists():
@@ -38,6 +121,7 @@ def load_css():
 
 load_css()
 
+# ここからのst.markdown(<style>...)は、このファイル内だけの追加CSSです。
 # カード内の補足情報が青い背景に埋もれないよう、文字と案内枠を高コントラスト化
 st.markdown(
     """
@@ -75,6 +159,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# 画面最上部の「Magic Park Navi」タイトル部分（hero）を表示します。
 st.markdown(
     """
     <section class="hero">
@@ -86,10 +171,20 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ======================================================================
+# ここまで 2. Streamlitページ設定・見た目
+# ======================================================================
+
+# ======================================================================
+# 3. 基本設定・固定データ
+# ======================================================================
+# ここは主に「値を登録しておく場所」。まだAPI取得などの重い処理はしません。
 # ------------------------------------------------------------------
 # 基本設定
 # ------------------------------------------------------------------
 
+# PARKS = パークごとの設定をまとめた辞書。
+# id=ThemeParks.wiki用ID / center=パーク中心 / bbox=OSM検索範囲 / official=公式URL
 PARKS = {
     "東京ディズニーランド": {
         "id": "3cc919f1-d16d-43e0-8c3f-1dd269bd1a42",
@@ -127,15 +222,18 @@ PARKS = {
     },
 }
 
+# 外部サービスの接続先。APIを変更する時はこの3つを確認します。
 THEMEPARKS_API = "https://api.themeparks.wiki/v1/entity"
 OVERPASS_API = "https://overpass-api.de/api/interpreter"
 VALHALLA_API = "https://valhalla1.openstreetmap.de/route"
 
+# アプリが読むCSVファイル。すべてapp.pyと同じフォルダを基準にしています。
 NAME_FILE = BASE_DIR / "attraction_names.csv"
 FAVORITES_FILE = BASE_DIR / "favorites.csv"
 ICON_FILE = BASE_DIR / "icon_catalog.csv"
 OFFICIAL_LINKS_FILE = BASE_DIR / "official_links.csv"
 
+# 施設種別ごとの基本アイコン。お気に入り未設定時の地図やカードで使用。
 TYPE_ICONS = {
     "アトラクション": "🎡",
     "レストラン": "🍽️",
@@ -143,12 +241,14 @@ TYPE_ICONS = {
     "ランドマーク": "📍",
 }
 
+# 絶叫度を数値順に扱いたい時の対応表。
 THRILL_ORDER = {
     "穏やか": 0,
     "軽いスリル": 1,
     "絶叫強め": 2,
 }
 
+# APIの英語ステータス → 画面に出す日本語の対応表。
 STATUS_JA = {
     "OPERATING": "営業中",
     "DOWN": "一時休止",
@@ -160,6 +260,8 @@ STATUS_JA = {
 
 # ThemeParks.wikiの東京ディズニー情報では、各アトラクションの
 # 所属エリアが安定して返らないため、公式パーク区分に合わせて保持する。
+# 【固定データ】アトラクション名 → エリア名の対応表。
+# これは処理ではなく「名簿」。エリアを直す時はここを編集します。
 ATTRACTION_AREAS = {
     "東京ディズニーランド": {
         "ワールドバザール": {
@@ -270,6 +372,15 @@ ATTRACTION_AREAS = {
 }
 
 
+
+# ------------------------------------------------------------------
+# 関数：attraction_area()
+# 役割：アトラクション名から所属エリアを探す
+# 入力：park_name / attraction_name
+# 出力：エリア名
+# どこで使う：attraction_dfのarea列作成
+# 自分で触るなら：アトラクションのエリア判定を変える時
+# ------------------------------------------------------------------
 def attraction_area(park_name, attraction_name):
     """アトラクション名から所属エリアを返す。"""
     target = normalize_name(attraction_name)
@@ -285,12 +396,29 @@ def attraction_area(park_name, attraction_name):
     return "エリア未設定"
 
 
+# ======================================================================
+# ここまで 3. 基本設定・固定データ
+# ======================================================================
+
+# ======================================================================
+# 4. CSV・お気に入り関係
+# ======================================================================
+# ここからしばらくは「関数の定義」。後半で呼ばれるまで中身は動きません。
 # ------------------------------------------------------------------
 # CSV・お気に入り
 # attraction_names.csv / favorites.csv / icon_catalog.csv を扱う
 # ------------------------------------------------------------------
 
 @st.cache_data
+
+# ------------------------------------------------------------------
+# 関数：load_attraction_master()
+# 役割：attraction_names.csvを読む
+# 入力：入力なし
+# 出力：DataFrame
+# どこで使う：アトラクションへCSV情報を結合する前
+# 自分で触るなら：CSV列を変える時
+# ------------------------------------------------------------------
 def load_attraction_master():
     """日本語名・待機環境・絶叫度などの補助情報を読む。"""
     if not NAME_FILE.exists():
@@ -303,6 +431,15 @@ def load_attraction_master():
 
 
 @st.cache_data
+
+# ------------------------------------------------------------------
+# 関数：load_icon_catalog()
+# 役割：お気に入り用アイコン一覧を読む
+# 入力：入力なし
+# 出力：DataFrame
+# どこで使う：カードのアイコン変更UI
+# 自分で触るなら：アイコンCSVを変える時
+# ------------------------------------------------------------------
 def load_icon_catalog():
     """お気に入りアイコン一覧を読む。"""
     if not ICON_FILE.exists():
@@ -321,6 +458,15 @@ def load_icon_catalog():
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：load_favorites()
+# 役割：favorites.csvを読む
+# 入力：入力なし
+# 出力：{施設ID: アイコン}
+# どこで使う：地図・カード表示前
+# 自分で触るなら：お気に入り保存形式を変える時
+# ------------------------------------------------------------------
 def load_favorites():
     """
     お気に入りを読む。
@@ -354,6 +500,15 @@ def load_favorites():
     }
 
 
+
+# ------------------------------------------------------------------
+# 関数：save_favorites()
+# 役割：お気に入りをCSVへ保存
+# 入力：favorites辞書
+# 出力：戻り値なし
+# どこで使う：追加/解除/アイコン変更時
+# 自分で触るなら：保存列を変える時
+# ------------------------------------------------------------------
 def save_favorites(favorites):
     """お気に入りをCSVへ保存する。"""
     rows = [
@@ -371,6 +526,15 @@ def save_favorites(favorites):
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：toggle_favorite()
+# 役割：お気に入りを追加または解除
+# 入力：entity_id / default_icon
+# 出力：戻り値なし・最後にrerun
+# どこで使う：カードの☆/★ボタン
+# 自分で触るなら：お気に入り動作を変える時
+# ------------------------------------------------------------------
 def toggle_favorite(entity_id, default_icon):
     """お気に入りを追加・解除する。"""
     favorites = load_favorites()
@@ -385,6 +549,15 @@ def toggle_favorite(entity_id, default_icon):
     st.rerun()
 
 
+
+# ------------------------------------------------------------------
+# 関数：change_favorite_icon()
+# 役割：お気に入りアイコンを変更
+# 入力：entity_id / icon
+# 出力：戻り値なし・最後にrerun
+# どこで使う：アイコン変更ボタン
+# 自分で触るなら：変更ルールを変える時
+# ------------------------------------------------------------------
 def change_favorite_icon(entity_id, icon):
     """お気に入りアイコンを変更する。"""
     favorites = load_favorites()
@@ -398,11 +571,28 @@ def change_favorite_icon(entity_id, icon):
     st.rerun()
 
 
+# ======================================================================
+# ここまで 4. CSV・お気に入り関係
+# ======================================================================
+
+# ======================================================================
+# 5. API取得・公式情報の照合
+# ======================================================================
+# ThemeParks.wiki / 公式サイト / OpenStreetMap から情報を集める関数群です。
 # ------------------------------------------------------------------
 # API取得
 # ThemeParks.wiki / 東京ディズニー公式 / OpenStreetMap を扱う
 # ------------------------------------------------------------------
 
+
+# ------------------------------------------------------------------
+# 関数：parse_official_date()
+# 役割：公式の日付文字列をdate型へ変換
+# 入力：value
+# 出力：dateまたはNone
+# どこで使う：休止期間比較
+# 自分で触るなら：公式日付書式が変わった時
+# ------------------------------------------------------------------
 def parse_official_date(value):
     """公式サイトの日付文字列をdateへ変換する。"""
     value = str(value or "").strip()
@@ -419,6 +609,15 @@ def parse_official_date(value):
         return None
 
 @st.cache_data(ttl=3600)
+
+# ------------------------------------------------------------------
+# 関数：get_attractions()
+# 役割：ThemeParks.wikiからアトラクション基本情報と座標を取得
+# 入力：park_id
+# 出力：list[dict]
+# どこで使う：画面のデータ取得ブロック
+# 自分で触るなら：API形式が変わった時
+# ------------------------------------------------------------------
 def get_attractions(park_id):
     """ThemeParks.wikiからアトラクションと座標を取る。"""
     response = requests.get(
@@ -457,6 +656,15 @@ def get_attractions(park_id):
 
 
 @st.cache_data(ttl=300)
+
+# ------------------------------------------------------------------
+# 関数：get_live_data()
+# 役割：営業状況・待ち時間・パス情報を取得
+# 入力：park_id
+# 出力：list[dict]
+# どこで使う：attraction_dfへmerge
+# 自分で触るなら：待ち時間項目を変える時
+# ------------------------------------------------------------------
 def get_live_data(park_id):
     """ThemeParks.wikiから営業状況・待ち時間・パス情報を取る。"""
     response = requests.get(
@@ -530,6 +738,15 @@ def get_live_data(park_id):
 
     return rows
 @st.cache_data(ttl=3600)
+
+# ------------------------------------------------------------------
+# 関数：get_official_suspensions()
+# 役割：公式休止ページから施設名と期間を取得
+# 入力：park_name
+# 出力：list[dict]
+# どこで使う：休止情報付与
+# 自分で触るなら：公式ページ構造が変わった時
+# ------------------------------------------------------------------
 def get_official_suspensions(park_name):
     """
     東京ディズニーリゾート公式の休止情報ページから、
@@ -603,6 +820,15 @@ def get_official_suspensions(park_name):
 
     return records
 @st.cache_data
+
+# ------------------------------------------------------------------
+# 関数：get_official_restaurant_info()
+# 役割：official_links.csvから公式レストラン情報を読む
+# 入力：park_name
+# 出力：list[dict]
+# どこで使う：レストラン照合
+# 自分で触るなら：CSV必須列を変える時
+# ------------------------------------------------------------------
 def get_official_restaurant_info(park_name):
     """
     official_links.csvの既存列だけから、
@@ -674,6 +900,7 @@ def get_official_restaurant_info(park_name):
 # エリア情報だけはこの FACILITY_AREAS から取得します。
 # ============================================================
 
+# この巨大な辞書も「固定データ」。レストラン / ショップ名から所属エリアを引く表です。
 FACILITY_AREAS = {'東京ディズニーランド': {'レストラン': {'れすとらん北齋': 'ワールドバザール',
                           'アイスクリームコーン': 'ワールドバザール',
                           'イーストサイド・カフェ': 'ワールドバザール',
@@ -862,6 +1089,8 @@ FACILITY_AREAS = {'東京ディズニーランド': {'レストラン': {'れす
 #    更新する場合はこの辞書だけ直せばよい。
 # ============================================================
 
+# この辞書はレストラン名 → 座席数の固定データ。
+# 座席数を直す時はカード表示処理ではなく、まずここを直します。
 RESTAURANT_SEATS = {'東京ディズニーシー': {'S.S.コロンビア・ダイニングルーム': 180,
                'アレンデール・ロイヤルバンケット': 570,
                'カフェ・ポルトフィーノ': 540,
@@ -917,6 +1146,15 @@ RESTAURANT_SEATS = {'東京ディズニーシー': {'S.S.コロンビア・ダ�
                 'ロイヤルストリート・ベランダ': 20}}
 
 
+
+# ------------------------------------------------------------------
+# 関数：get_restaurant_seat_count()
+# 役割：固定表から座席数を探す
+# 入力：park_name / restaurant_name
+# 出力：座席数またはNone
+# どこで使う：レストランカード
+# 自分で触るなら：座席検索を変える時
+# ------------------------------------------------------------------
 def get_restaurant_seat_count(park_name, restaurant_name):
     """
     レストラン名から座席数を取得する。
@@ -941,6 +1179,15 @@ def get_restaurant_seat_count(park_name, restaurant_name):
 
 
 
+
+# ------------------------------------------------------------------
+# 関数：resolve_facility_area()
+# 役割：施設1件の表示用エリアを決める
+# 入力：row / park_name
+# 出力：エリア名
+# どこで使う：all_dfのarea列
+# 自分で触るなら：エリア判定を変える時
+# ------------------------------------------------------------------
 def resolve_facility_area(row, park_name):
     """
     施設1件の所属エリアを返す。
@@ -993,6 +1240,15 @@ def resolve_facility_area(row, park_name):
 
 
 
+
+# ------------------------------------------------------------------
+# 関数：match_restaurant_info()
+# 役割：アプリ店舗名と公式店舗名を類似度で照合
+# 入力：restaurant_name / records
+# 出力：recordまたはNone
+# どこで使う：restaurant_info列
+# 自分で触るなら：照合しきい値を変える時
+# ------------------------------------------------------------------
 def match_restaurant_info(
     restaurant_name,
     restaurant_records,
@@ -1038,6 +1294,15 @@ def match_restaurant_info(
     return best
 
 
+
+# ------------------------------------------------------------------
+# 関数：overpass_query()
+# 役割：OSMへ送る検索文を作る
+# 入力：bbox
+# 出力：Overpass QL文字列
+# どこで使う：get_osm_pois内
+# 自分で触るなら：取得施設種別を変える時
+# ------------------------------------------------------------------
 def overpass_query(bbox):
     """レストラン・ショップ・ランドマーク用のOverpassクエリ。"""
     south, west, north, east = bbox
@@ -1055,6 +1320,15 @@ def overpass_query(bbox):
 
 
 @st.cache_data(ttl=21600)
+
+# ------------------------------------------------------------------
+# 関数：get_osm_pois()
+# 役割：OSMからレストラン/ショップを取得
+# 入力：park_name
+# 出力：list[dict]
+# どこで使う：poi_df作成
+# 自分で触るなら：OSM取得項目を変える時
+# ------------------------------------------------------------------
 def get_osm_pois(park_name):
     """
     OpenStreetMapから飲食・買物・ランドマークを取る。
@@ -1129,6 +1403,15 @@ def get_osm_pois(park_name):
 
 
 
+
+# ------------------------------------------------------------------
+# 関数：contains_japanese()
+# 役割：日本語文字を含むか判定
+# 入力：value
+# 出力：True/False
+# どこで使う：日本語名フィルタ
+# 自分で触るなら：判定範囲を変える時
+# ------------------------------------------------------------------
 def contains_japanese(value):
     """ひらがな・カタカナ・漢字が含まれるか。"""
     return bool(
@@ -1139,6 +1422,15 @@ def contains_japanese(value):
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：deduplicate_facilities()
+# 役割：同名施設の重複を1件へ整理
+# 入力：frame
+# 出力：DataFrame
+# どこで使う：all_df/favorite_df整理
+# 自分で触るなら：重複基準を変える時
+# ------------------------------------------------------------------
 def deduplicate_facilities(frame):
     """
     施設名を正規化して重複を1件にまとめる。
@@ -1170,12 +1462,23 @@ def deduplicate_facilities(frame):
 
 
 
+# ※ OFFICIAL_LINKS_FILEは上の基本設定でも同じ値を定義済みです。
+# 今のままでも動きますが、整理するなら1か所へまとめられます。
 OFFICIAL_LINKS_FILE = BASE_DIR / "official_links.csv"
 
 # ------------------------------------------------------------------
 # 東京ディズニー公式の個別詳細ページ
 # ------------------------------------------------------------------
 
+
+# ------------------------------------------------------------------
+# 関数：normalize_name()
+# 役割：施設名の記号・空白差を消して比較しやすくする
+# 入力：value
+# 出力：正規化文字列
+# どこで使う：名称照合全般
+# 自分で触るなら：表記揺れルールを変える時
+# ------------------------------------------------------------------
 def normalize_name(value):
     """施設名の記号差を吸収して照合する。"""
     value = unicodedata.normalize(
@@ -1197,6 +1500,15 @@ def normalize_name(value):
     return value
 
 @st.cache_data
+
+# ------------------------------------------------------------------
+# 関数：load_official_links()
+# 役割：official_links.csvを辞書へ変換
+# 入力：入力なし
+# 出力：公式情報辞書
+# どこで使う：lookup_officialで使用
+# 自分で触るなら：CSV列を変える時
+# ------------------------------------------------------------------
 def load_official_links():
     """公式リンクと、CSVに保存した公式サービス情報を読む。"""
     if not OFFICIAL_LINKS_FILE.exists():
@@ -1216,6 +1528,15 @@ def load_official_links():
     if not required.issubset(df.columns):
         return {}
 
+
+    # ------------------------------------------------------------------
+    # 関数：as_bool()
+    # 役割：CSVの文字をTrue/Falseへ変換する内部関数
+    # 入力：value
+    # 出力：True/False
+    # どこで使う：load_official_links内
+    # 自分で触るなら：真偽値表記を増やす時
+    # ------------------------------------------------------------------
     def as_bool(value):
         return str(value).strip().lower() in {
             "1", "true", "yes", "対象", "あり"
@@ -1249,6 +1570,15 @@ def load_official_links():
     return links
 
 
+
+# ------------------------------------------------------------------
+# 関数：detail_pattern()
+# 役割：公式詳細URLのパターンを作る
+# 入力：park_name / facility_type
+# 出力：regexまたはNone
+# どこで使う：get_official_facilities内
+# 自分で触るなら：URL構造が変わった時
+# ------------------------------------------------------------------
 def detail_pattern(park_name, facility_type):
     park_code = "tdl" if park_name == "東京ディズニーランド" else "tds"
     section = {
@@ -1266,6 +1596,15 @@ def detail_pattern(park_name, facility_type):
 
 
 @st.cache_data(ttl=21600)
+
+# ------------------------------------------------------------------
+# 関数：get_official_facilities()
+# 役割：公式一覧から個別詳細URLと正式名を取得
+# 入力：park_name / facility_type
+# 出力：list[dict]
+# どこで使う：match_official_facilityから使用
+# 自分で触るなら：公式HTMLが変わった時
+# ------------------------------------------------------------------
 def get_official_facilities(park_name, facility_type):
     """
     公式一覧から detail/数字/ のURLを抽出し、
@@ -1312,6 +1651,15 @@ def get_official_facilities(park_name, facility_type):
         ):
             detail_urls.add(absolute_url)
 
+
+    # ------------------------------------------------------------------
+    # 関数：fetch_detail()
+    # 役割：公式詳細ページ1件から施設名を抜く内部関数
+    # 入力：detail_url
+    # 出力：dictまたはNone
+    # どこで使う：get_official_facilities内
+    # 自分で触るなら：名前抽出方法を変える時
+    # ------------------------------------------------------------------
     def fetch_detail(detail_url):
         try:
             detail_response = requests.get(
@@ -1391,6 +1739,15 @@ def get_official_facilities(park_name, facility_type):
     return records
 
 
+
+# ------------------------------------------------------------------
+# 関数：official_match_score()
+# 役割：施設名の一致度を0〜1で採点
+# 入力：target / candidate
+# 出力：float
+# どこで使う：公式照合
+# 自分で触るなら：一致判定を変える時
+# ------------------------------------------------------------------
 def official_match_score(target, candidate):
     """完全一致・包含・類似度を組み合わせて採点する。"""
     if not target or not candidate:
@@ -1404,6 +1761,15 @@ def official_match_score(target, candidate):
     return SequenceMatcher(None, target, candidate).ratio()
 
 
+
+# ------------------------------------------------------------------
+# 関数：match_official_facility()
+# 役割：高確度で一致する公式個別ページを返す
+# 入力：park_name / type / name
+# 出力：dictまたはNone
+# どこで使う：公式詳細候補取得
+# 自分で触るなら：誤リンクしきい値を変える時
+# ------------------------------------------------------------------
 def match_official_facility(park_name, facility_type, facility_name):
     """
     個別詳細ページが高い確度で一致した場合だけURLを返す。
@@ -1432,6 +1798,15 @@ def match_official_facility(park_name, facility_type, facility_name):
         **best,
         "score": score,
     }
+
+# ------------------------------------------------------------------
+# 関数：get_suspension_info()
+# 役割：施設名に合う公式休止recordを探す
+# 入力：facility_name / records
+# 出力：recordまたはNone
+# どこで使う：休止情報列作成
+# 自分で触るなら：休止名照合を変える時
+# ------------------------------------------------------------------
 def get_suspension_info(
     facility_name,
     suspension_records,
@@ -1469,6 +1844,15 @@ def get_suspension_info(
     return best
 
 
+
+# ------------------------------------------------------------------
+# 関数：suspension_status()
+# 役割：今日の日付から休止中/休止予定を判定
+# 入力：record
+# 出力：状態dict
+# どこで使う：公式休止表示
+# 自分で触るなら：期間判定を変える時
+# ------------------------------------------------------------------
 def suspension_status(record):
     """
     公式休止期間から、
@@ -1510,11 +1894,28 @@ def suspension_status(record):
         "is_upcoming": False,
         "text": "",
     }
+# ======================================================================
+# ここまで 5. API取得・公式情報の照合
+# ======================================================================
+
+# ======================================================================
+# 6. 計算・表示情報の加工
+# ======================================================================
+# GPSの値を整える、距離を計算する、表示用情報を作る補助処理です。
 # ------------------------------------------------------------------
 # 計算・表示情報
 # GPS・距離・表示用情報の加工
 # ------------------------------------------------------------------
 
+
+# ------------------------------------------------------------------
+# 関数：scroll_to_anchor()
+# 役割：JSで指定位置へスクロール
+# 入力：anchor_id
+# 出力：戻り値なし
+# どこで使う：rerun後の画面移動
+# 自分で触るなら：スクロール方法を変える時
+# ------------------------------------------------------------------
 def scroll_to_anchor(anchor_id):
     """再実行後に指定した画面位置へ移動する。"""
     components.html(
@@ -1538,6 +1939,15 @@ def scroll_to_anchor(anchor_id):
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：consume_scroll_target()
+# 役割：スクロール予約を1回実行して消す
+# 入力：anchor_id
+# 出力：戻り値なし
+# どこで使う：status/route表示前
+# 自分で触るなら：画面移動管理を変える時
+# ------------------------------------------------------------------
 def consume_scroll_target(anchor_id):
     """このアンカーへの移動予約があれば一度だけ実行する。"""
     if st.session_state.get("scroll_target") != anchor_id:
@@ -1547,6 +1957,15 @@ def consume_scroll_target(anchor_id):
     st.session_state.pop("scroll_target", None)
 
 
+
+# ------------------------------------------------------------------
+# 関数：normalize_location()
+# 役割：GPS返却値から緯度経度を取り出す
+# 入力：value
+# 出力：位置dictまたはNone
+# どこで使う：GPS取得直後
+# 自分で触るなら：GPSライブラリ形式が変わった時
+# ------------------------------------------------------------------
 def normalize_location(value):
     """GPS部品の返却形式から緯度・経度を取り出す。"""
     if not isinstance(value, dict):
@@ -1572,6 +1991,15 @@ def normalize_location(value):
     return None
 
 
+
+# ------------------------------------------------------------------
+# 関数：distance_m()
+# 役割：2地点の直線距離mを計算
+# 入力：lat1/lon1/lat2/lon2
+# 出力：float(m)
+# どこで使う：全施設距離計算
+# 自分で触るなら：距離計算を変える時
+# ------------------------------------------------------------------
 def distance_m(lat1, lon1, lat2, lon2):
     """2地点の直線距離。"""
     radius = 6_371_000
@@ -1597,6 +2025,15 @@ def distance_m(lat1, lon1, lat2, lon2):
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：poi_details()
+# 役割：OSMタグを料理/形式/価格等へ整理
+# 入力：row
+# 出力：表示用dict
+# どこで使う：検索・施設詳細
+# 自分で触るなら：表示項目を増やす時
+# ------------------------------------------------------------------
 def poi_details(row):
     """OSMタグから施設説明を組み立てる。"""
     tags = row.get("osm_tags") or {}
@@ -1637,6 +2074,15 @@ def poi_details(row):
     }
 
 
+
+# ------------------------------------------------------------------
+# 関数：is_cool_spot()
+# 役割：涼しい候補か判定
+# 入力：row
+# 出力：True/False
+# どこで使う：cool_spot列
+# 自分で触るなら：涼しい条件を変える時
+# ------------------------------------------------------------------
 def is_cool_spot(row):
     """
     涼しい場所の候補判定。
@@ -1660,6 +2106,15 @@ def is_cool_spot(row):
     return row["type"] in {"レストラン", "ショップ"}
 
 
+
+# ------------------------------------------------------------------
+# 関数：official_url()
+# 役割：施設種別の公式一覧URLを返す
+# 入力：park_name / type
+# 出力：URL
+# どこで使う：official_url列
+# 自分で触るなら：URL扱いを変える時
+# ------------------------------------------------------------------
 def official_url(park_name, facility_type):
     """施設種別に対応する東京ディズニー公式ページ。"""
     return PARKS[park_name]["official"].get(
@@ -1668,6 +2123,15 @@ def official_url(park_name, facility_type):
     )
 
 
+
+# ------------------------------------------------------------------
+# 関数：balanced_score()
+# 役割：距離と待ち時間を半々で点数化
+# 入力：frame
+# 出力：DataFrame
+# どこで使う：バランス順
+# 自分で触るなら：重みを変える時
+# ------------------------------------------------------------------
 def balanced_score(frame):
     """
     距離と待ち時間を0～1へ正規化し、同じ重みで合算する。
@@ -1704,11 +2168,27 @@ def balanced_score(frame):
     return result
 
 
+# ======================================================================
+# ここまで 6. 計算・表示情報の加工
+# ======================================================================
+
+# ======================================================================
+# 7. 徒歩ルート関係
+# ======================================================================
 # ------------------------------------------------------------------
 # 徒歩ルート
 # Valhalla APIを使ったパーク内徒歩ルート
 # ------------------------------------------------------------------
 
+
+# ------------------------------------------------------------------
+# 関数：decode_polyline6()
+# 役割：Valhallaの圧縮ルートを座標列へ戻す
+# 入力：encoded
+# 出力：座標list
+# どこで使う：get_walking_route内
+# 自分で触るなら：通常は触らなくてよい
+# ------------------------------------------------------------------
 def decode_polyline6(encoded):
     """Valhallaのencoded polyline（精度6）を緯度経度へ戻す。"""
     coordinates = []
@@ -1744,6 +2224,15 @@ def decode_polyline6(encoded):
 
 
 @st.cache_data(ttl=300)
+
+# ------------------------------------------------------------------
+# 関数：get_walking_route()
+# 役割：Valhallaで徒歩ルートを取得
+# 入力：出発/目的地の緯度経度
+# 出力：route dict
+# どこで使う：route_target表示時
+# 自分で触るなら：ルートAPIを変える時
+# ------------------------------------------------------------------
 def get_walking_route(start_lat, start_lon, end_lat, end_lon):
     """
     Valhallaの歩行者ルートを取得する。
@@ -1794,102 +2283,114 @@ def get_walking_route(start_lat, start_lon, end_lat, end_lon):
     }
 
 
+# ======================================================================
+# ここまで 7. 徒歩ルート関係
+# ======================================================================
+
+# ======================================================================
+# 8. 地図を作る関数
+# ======================================================================
+# ここでは地図を「作る」。実際に画面へ出すのは後半のfolium_static()です。
 # ------------------------------------------------------------------
 # 地図
 # Foliumで現在地・施設・ルートを描画
 # ------------------------------------------------------------------
 
+
+# ------------------------------------------------------------------
+# 関数：add_facility_marker()
+# 役割：地図へ施設マーカー1件を追加
+# 入力：map / row / favorites
+# 出力：戻り値なし
+# どこで使う：make_overview_map内
+# 自分で触るなら：ピン/色/吹き出しを変える時
+# ------------------------------------------------------------------
 def add_facility_marker(disney_map, row, favorites):
-    """
-    施設マーカーを追加する。
-
-    ・通常施設は、すでにある TYPE_ICONS のカテゴリ別アイコンを使う
-      アトラクション → 🎡
-      レストラン     → 🍽️
-      ショップ       → 🛍️
-
-    ・お気に入り施設は favorites.csv に保存している
-      ユーザー選択アイコンを優先し、金色の枠で分かりやすくする
-
-    ・マーカーをクリックしたときは施設名だけを表示する
-    """
+    """施設マーカーを追加する。"""
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
+    type_icon = TYPE_ICONS.get(row["type"], "📍")
+    marker_text = favorites.get(entity_id, type_icon)
 
-    # 既存の施設タイプ設定を、そのまま地図アイコンにも使う
-    category_icon = TYPE_ICONS.get(row["type"], "📍")
-
-    # お気に入りなら、今までユーザーが選んで保存している
-    # お気に入りアイコンを優先する
-    marker_text = favorites.get(entity_id, category_icon)
-
-    # お気に入りは金枠、それ以外は施設タイプごとの枠色
-    border_color = (
-        "#f5b301"
-        if is_favorite
-        else {
-            "アトラクション": "#dc2626",
-            "レストラン": "#16a34a",
-            "ショップ": "#7c3aed",
-            "ランドマーク": "#0891b2",
-        }.get(row["type"], "#64748b")
+    wait_value = row.get("wait_time")
+    status_text = str(
+        row.get("状況", "情報なし")
     )
+    
+    if status_text == "休止中":
+        wait_text = "休止中"
+    
+    elif status_text == "一時休止":
+        wait_text = "一時休止"
+    
+    elif status_text == "受付終了":
+        wait_text = "受付終了"
+    
+    elif pd.notna(wait_value):
+        wait_text = f"{int(wait_value)}分"
+    
+    else:
+        wait_text = "待ち時間情報なし"
 
-    # 通常施設もお気に入りも、絵文字をそのまま地図マーカーにする
-    marker_icon = folium.DivIcon(
-        html=f"""
-        <div style="
-            width:34px;
-            height:34px;
-            border-radius:50%;
-            background:white;
-            border:3px solid {border_color};
-            box-shadow:0 2px 5px rgba(0,0,0,.35);
-            font-size:20px;
-            line-height:28px;
-            text-align:center;
-            white-space:nowrap;
-        ">{marker_text}</div>
-        """,
-        icon_size=(34, 34),
-        icon_anchor=(17, 17),
-    )
+    display_name = row["name_ja"]
 
-    display_name = str(row["name_ja"])
+    popup = f"""
+    <b>{marker_text} {display_name}</b><br>
+    種類：{row["type"]}<br>
+    直線距離：{int(row["distance_m"])}m<br>
+    待ち時間：{wait_text}<br>
+    """
+
+    if is_favorite:
+        marker_icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width:34px;
+                height:34px;
+                border-radius:50%;
+                background:white;
+                border:3px solid #f5b301;
+                box-shadow:0 2px 5px rgba(0,0,0,.35);
+                font-size:20px;
+                line-height:28px;
+                text-align:center;
+            ">{marker_text}</div>
+            """,
+            icon_size=(34, 34),
+            icon_anchor=(17, 17),
+        )
+    else:
+        color = {
+            "アトラクション": "red",
+            "レストラン": "green",
+            "ショップ": "purple",
+            "ランドマーク": "cadetblue",
+        }.get(row["type"], "gray")
+
+        marker_icon = folium.Icon(
+            color=color,
+            icon="info-sign",
+        )
 
     folium.Marker(
         [row["lat"], row["lon"]],
-        # カーソルを合わせた時も施設名だけ
-        tooltip=display_name,
-        # クリック時の大きい詳細表示をやめ、施設名だけにする
-        popup=folium.Popup(display_name, max_width=180),
+        tooltip=f"{marker_text} {display_name}",
+        popup=folium.Popup(popup, max_width=300),
         icon=marker_icon,
     ).add_to(disney_map)
 
 
-def make_overview_map(
-    marker_frame,
-    location,
-    favorites,
-    focus_frame=None,
-):
-    """
-    一覧確認用の地図。
 
-    marker_frame:
-        地図に実際に置くマーカー。
-        ここにはパーク内の全対象施設を渡す。
-
-    focus_frame:
-        現在の検索・エリア絞り込み結果。
-        エリアを選んでいる場合は、その施設群が見える位置へ
-        最初の表示範囲だけ合わせる。
-
-    つまり、
-        ・最初は選択中エリアを見やすく表示
-        ・地図を縮小すると他エリアの施設も全部見える
-    という動きになる。
-    """
+# ------------------------------------------------------------------
+# 関数：make_overview_map()
+# 役割：一覧用地図を作る
+# 入力：frame / location / favorites
+# 出力：folium.Map
+# どこで使う：一覧地図/マップタブ
+# 自分で触るなら：地図全体を変える時
+# ------------------------------------------------------------------
+def make_overview_map(frame, location, favorites):
+    """一覧確認用の小さい地図。"""
     disney_map = folium.Map(
         location=[
             location["latitude"],
@@ -1905,7 +2406,6 @@ def make_overview_map(
         scroll_wheel_zoom=False,
     )
 
-    # GPS現在地マーカー
     folium.Marker(
         [
             location["latitude"],
@@ -1918,54 +2418,21 @@ def make_overview_map(
         ),
     ).add_to(disney_map)
 
-    # --------------------------------------------------------
-    # 地図上のマーカーは「現在の絞り込み結果だけ」にしない。
-    # marker_frameに入っている全施設を置く。
-    #
-    # これにより、例えばファンタジーランドを選択中でも
-    # 地図を縮小すればワールドバザールや
-    # トゥモローランド等の施設も見える。
-    # --------------------------------------------------------
-    for _, row in marker_frame.iterrows():
-        add_facility_marker(
-            disney_map,
-            row,
-            favorites,
-        )
-
-    # --------------------------------------------------------
-    # 初期表示だけ現在の絞り込み結果へ寄せる
-    # --------------------------------------------------------
-    if (
-        focus_frame is not None
-        and not focus_frame.empty
-    ):
-        focus_points = (
-            focus_frame[
-                ["lat", "lon"]
-            ]
-            .dropna()
-            .values
-            .tolist()
-        )
-
-        # 2件以上なら、その施設群が画面内へ収まるようにする
-        if len(focus_points) >= 2:
-            disney_map.fit_bounds(
-                focus_points,
-                padding=(35, 35),
-            )
-
-        # 1件だけならその施設を中心へ
-        elif len(focus_points) == 1:
-            disney_map.location = focus_points[0]
-            disney_map.options[
-                "zoom"
-            ] = 18
+    for _, row in frame.head(60).iterrows():
+        add_facility_marker(disney_map, row, favorites)
 
     return disney_map
 
 
+
+# ------------------------------------------------------------------
+# 関数：make_route_map()
+# 役割：徒歩ルート地図を作る
+# 入力：route / target / location
+# 出力：folium.Map
+# どこで使う：ルート表示
+# 自分で触るなら：線/ピンを変える時
+# ------------------------------------------------------------------
 def make_route_map(route, target, location):
     """選択施設までの徒歩ルート専用地図。"""
     disney_map = folium.Map(
@@ -2015,6 +2482,15 @@ def make_route_map(route, target, location):
     return disney_map
 
 
+# ======================================================================
+# ここまで 8. 地図を作る関数
+# ======================================================================
+
+# ======================================================================
+# 9. ここから実際の画面処理（アプリ本体）
+# ======================================================================
+# ここより上は主に「設定」と「関数定義」。
+# ここから下はStreamlitが上から順番に実行し、データ取得・加工・表示まで行います。
 # ------------------------------------------------------------------
 # 画面
 # ここからStreamlitのUIを組み立てる
@@ -2025,6 +2501,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# 9-1. パーク切り替え。選択結果はpark_nameへ入ります。
 park_name = st.radio(
     "パーク",
     list(PARKS),
@@ -2039,6 +2516,7 @@ park_name = st.radio(
 )
 
 
+# 9-2. メインカテゴリ切り替え。現在のタブ名がcategory_pageへ入ります。
 category_page = st.radio(
     "カテゴリ",
     [
@@ -2053,6 +2531,7 @@ category_page = st.radio(
     key="main_category_page",
 )
 
+# 画面のカテゴリ名 → 内部データのtype名へ変換する対応表。
 category_to_types = {
     "🎢 アトラクション": ["アトラクション"],
     "🍽 レストラン": ["レストラン"],
@@ -2071,6 +2550,7 @@ category_to_types = {
 
 facility_types = category_to_types[category_page]
 
+# 9-3. フィルタ条件の初期値。下のUI操作で必要なものだけ値が変わります。
 category_search = ""
 selected_area = "すべて"
 cool_only = False
@@ -2078,6 +2558,7 @@ avoid_thrill = False
 japanese_only = True
 official_only = False
 
+# 9-4. 通常3カテゴリだけ検索欄とエリア選択を表示します。
 if category_page in {
     "🎢 アトラクション",
     "🍽 レストラン",
@@ -2109,6 +2590,7 @@ if category_page in {
         key=f"facility_area_{park_name}_{category_page}",
     )
 
+# 9-5. アトラクションタブだけ「屋内」「絶叫除外」フィルタを表示。
 if category_page == "🎢 アトラクション":
     filter_col1, filter_col2 = st.columns(2)
 
@@ -2127,6 +2609,7 @@ if category_page == "🎢 アトラクション":
         )
 
 
+# 9-6. 並べ替え方法を選ぶUI。
 sort_mode = st.selectbox(
     "並べ替え",
     [
@@ -2140,10 +2623,12 @@ sort_mode = st.selectbox(
 search_word = ""
 
 
+# 9-7. GPS現在地取得。location_rawはGPSライブラリの生データです。
 location_raw = gps_location_button(
     buttonText="現在地を取得"
 )
 
+# normalize_location()でGPS生データを{latitude, longitude}へ整えます。
 location = normalize_location(location_raw)
 
 if location is None:
@@ -2154,6 +2639,14 @@ if location is None:
     st.stop()
 
 
+# ======================================================================
+# ここまで 9. ここから実際の画面処理（アプリ本体）
+# ======================================================================
+
+# ======================================================================
+# 10. API / CSVから元データを集める
+# ======================================================================
+# ここで初めて、上で定義したget_attractions()などが実際に呼ばれます。
 # データ取得
 try:
     with st.spinner("施設情報を取得しています…"):
@@ -2182,6 +2675,7 @@ except requests.RequestException as error:
     st.stop()
 
 
+# APIから返ったlistをpandasの表(DataFrame)へ変換します。
 attraction_df = pd.DataFrame(attraction_rows)
 live_df = pd.DataFrame(live_rows)
 master_df = load_attraction_master()
@@ -2190,6 +2684,7 @@ if attraction_df.empty:
     st.error("アトラクションを取得できませんでした。")
     st.stop()
 
+# 10-1. attraction_dfへCSVの日本語名・絶叫度・待機列情報などを追加。
 # アトラクションへ日本語名などを追加
 if not master_df.empty:
     useful_columns = [
@@ -2226,6 +2721,7 @@ attraction_df["area"] = attraction_df["name_ja"].map(
     )
 )
 
+# 10-2. entity_idを共通キーに、待ち時間・営業状況をattraction_dfへ合体。
 if not live_df.empty:
     attraction_df = attraction_df.merge(
         live_df,
@@ -2248,6 +2744,7 @@ attraction_df["status"] = (
     attraction_df["status"]
     .fillna("UNKNOWN")
 )
+# APIの英語statusを画面用の日本語「状況」列へ変換。
 attraction_df["状況"] = attraction_df["status"].map(
     lambda value: STATUS_JA.get(
         str(value).upper(),
@@ -2255,6 +2752,7 @@ attraction_df["状況"] = attraction_df["status"].map(
     )
 )
 
+# 10-3. 各アトラクション名を公式休止情報と照合。
 attraction_df["suspension_info"] = (
     attraction_df["name_ja"].map(
         lambda name: get_suspension_info(
@@ -2304,6 +2802,7 @@ attraction_df.loc[
     "状況",
 ] = "休止中"
 
+# 10-4. OSM由来のレストラン / ショップをpoi_dfへまとめます。
 # OSM施設と結合
 poi_df = pd.DataFrame(poi_rows)
 
@@ -2328,12 +2827,21 @@ if not poi_df.empty:
         .isin(attraction_names)
     ]
 
+# ======================================================================
+# ここまで 10. API / CSVから元データを集める
+# ======================================================================
+
+# ======================================================================
+# 11. attraction_df + poi_df → all_df（全施設）
+# ======================================================================
+# ここから全カテゴリ共通の距離・エリア・公式リンクなどを追加します。
 all_df = pd.concat(
     [attraction_df, poi_df],
     ignore_index=True,
     sort=False,
 )
 
+# 全施設についてGPS現在地からの直線距離を計算しdistance_m列へ追加。
 all_df["distance_m"] = all_df.apply(
     lambda row: round(
         distance_m(
@@ -2365,6 +2873,7 @@ all_df["has_japanese_name"] = all_df["name_ja"].map(
     contains_japanese
 )
 
+# パーク外として除外したい施設名のキーワード。増やすならここへ追加。
 EXCLUDED_NAME_WORDS = [
     "秋山写真館",
     "Lounge O",
@@ -2384,13 +2893,25 @@ all_df = all_df[
     ~all_df["is_excluded_external"]
 ].copy()
 
+# 同じ施設が複数ソースにある場合、deduplicate_facilities()で1件へ整理。
 # 同名の施設や、ThemeParks.wikiとOSMの重複を整理
 all_df = deduplicate_facilities(all_df)
 
 # 公式個別ページの有無を一度だけ計算してカードでも再利用
+# 11-1. official_links.csvを読み、各施設の公式個別ページを照合する準備。
+# official_lookupは現在ほぼ使わず、manual_linksが実際の照合元です。
 official_lookup = {}
 manual_links = load_official_links()
 
+
+# ------------------------------------------------------------------
+# 関数：lookup_official()
+# 役割：施設1件に合う公式情報をCSVから探す
+# 入力：row
+# 出力：dictまたはNone
+# どこで使う：official_info列
+# 自分で触るなら：照合精度を変える時
+# ------------------------------------------------------------------
 def lookup_official(row):
     """同じパーク・種別内で公式リンクを照合する。"""
     facility_type = row["type"]
@@ -2449,6 +2970,7 @@ all_df["official_info"] = all_df.apply(
     axis=1,
 )
 
+# 11-2. 全施設の表示用エリアを最終決定します。
 # ------------------------------------------------------------
 # 全施設に表示用のエリアを設定
 # ------------------------------------------------------------
@@ -2466,6 +2988,15 @@ all_df["area"] = all_df.apply(
     ),
     axis=1,
 )
+
+# ------------------------------------------------------------------
+# 関数：lookup_restaurant_data()
+# 役割：レストランだけ公式recordと照合
+# 入力：row
+# 出力：recordまたはNone
+# どこで使う：restaurant_info列
+# 自分で触るなら：照合処理を変える時
+# ------------------------------------------------------------------
 def lookup_restaurant_data(row):
     if row["type"] != "レストラン":
         return None
@@ -2476,6 +3007,7 @@ def lookup_restaurant_data(row):
     )
 
 
+# レストランだけ公式レストラン情報との照合結果をrestaurant_info列へ追加。
 all_df["restaurant_info"] = all_df.apply(
     lookup_restaurant_data,
     axis=1,
@@ -2487,6 +3019,7 @@ all_df["has_official_detail"] = all_df[
     "official_info"
 ].map(bool)
 
+# 公式詳細と照合できないショップを落とし、OSM由来のパーク外店舗などを除外。
 # ショップは東京ディズニーリゾート公式の個別ページと
 # 照合できたパーク内店舗だけ残す。
 # OSM由来のコンビニ、美容院、マッサージ店などは表示しない。
@@ -2504,11 +3037,20 @@ all_df["priority_seating"] = all_df["official_info"].map(
     lambda value: bool(value and value.get("priority_seating"))
 )
 
+# ======================================================================
+# ここまで 11. attraction_df + poi_df → all_df（全施設）
+# ======================================================================
+
+# ======================================================================
+# 12. all_df → display_df（今、画面に出す施設）
+# ======================================================================
+# all_dfは全施設のまま残し、copy()したdisplay_dfだけを条件で絞ります。
 # 絞り込み
 display_df = all_df[
     all_df["type"].isin(facility_types)
 ].copy()
 
+# 12-1. 検索欄に文字がある時だけ、施設名・料理・エリア等を検索。
 if category_page in {
     "🎢 アトラクション",
     "🍽 レストラン",
@@ -2516,6 +3058,15 @@ if category_page in {
 } and category_search.strip():
     query = category_search.strip()
 
+
+    # ------------------------------------------------------------------
+    # 関数：category_search_text()
+    # 役割：検索対象の項目を1本の文字列にまとめる
+    # 入力：row
+    # 出力：str
+    # どこで使う：カテゴリ検索
+    # 自分で触るなら：検索対象項目を増やす時
+    # ------------------------------------------------------------------
     def category_search_text(row):
         details = poi_details(row)
         tags = row.get("osm_tags") or {}
@@ -2545,6 +3096,7 @@ if category_page in {
         )
     ]
 
+# 12-2. selected_areaが「すべて」以外の時だけエリア絞り込み。
 # ------------------------------------------------------------
 # エリア絞り込み
 # ------------------------------------------------------------
@@ -2563,6 +3115,7 @@ if (
         == selected_area
     ]
 
+# 12-3. その他のフィルタ（涼しい/絶叫除外/日本語/公式）を順番に適用。
 if cool_only:
     display_df = display_df[
         display_df["cool_spot"]
@@ -2589,6 +3142,13 @@ if official_only:
         display_df["has_official_detail"]
     ]
 
+# ======================================================================
+# ここまで 12. all_df → display_df（今、画面に出す施設）
+# ======================================================================
+
+# ======================================================================
+# 13. display_dfを並べ替える
+# ======================================================================
 # 並べ替え
 if sort_mode == "距離が近い順":
     display_df = display_df.sort_values(
@@ -2612,6 +3172,7 @@ else:
 
 display_df = display_df.reset_index(drop=True)
 
+# カードと地図で使うお気に入り・アイコン一覧を読み込み。
 favorites = load_favorites()
 icon_catalog = load_icon_catalog()
 
@@ -2650,6 +3211,14 @@ st.markdown(
 )
 consume_scroll_target("page_status")
 
+# ======================================================================
+# ここまで 13. display_dfを並べ替える
+# ======================================================================
+
+# ======================================================================
+# 14. 現在の状態（GPS / 今いる施設 / 次の目的地）
+# ======================================================================
+# session_stateに保存した値はst.rerun()しても残ります。
 current_spot = st.session_state.get("current_spot")
 route_target = st.session_state.get("route_target")
 
@@ -2677,6 +3246,14 @@ st.markdown(
 )
 
 
+# ======================================================================
+# ここまで 14. 現在の状態（GPS / 今いる施設 / 次の目的地）
+# ======================================================================
+
+# ======================================================================
+# 15. 選択中の徒歩ルート
+# ======================================================================
+# 「🚶 行く」を押すとroute_targetが入り、if route_target:の中が表示されます。
 # 選択中ルート
 st.markdown(
     '<div id="route_section"></div>',
@@ -2687,6 +3264,7 @@ consume_scroll_target("route_section")
 if route_target:
     st.subheader(f"🚶 {route_target['name_ja']}へ行く")
 
+    # 「今ここ」があればその施設を出発点。なければGPS現在地を出発点にします。
     if current_spot:
         route_origin = {
             "latitude": current_spot["lat"],
@@ -2716,6 +3294,7 @@ if route_target:
         park_center[1],
     )
 
+    # パーク中心から10km以上離れている時は、パーク内ルート計算を止めます。
     if distance_from_park > 10_000:
         st.warning(
             f"出発地点がパークから約{distance_from_park / 1000:.0f}km離れています。"
@@ -2776,6 +3355,7 @@ if route_target:
 
     arrival_col, close_col = st.columns(2)
 
+    # 「到着した」→ 目的地をcurrent_spotへ移し、route_targetを消します。
     with arrival_col:
         if st.button(
             "✅ 到着した",
@@ -2793,6 +3373,7 @@ if route_target:
             st.session_state["scroll_target"] = "page_status"
             st.rerun()
 
+    # 「ルートを閉じる」→ route_targetだけ消します。
     with close_col:
         if st.button(
             "ルートを閉じる",
@@ -2803,45 +3384,52 @@ if route_target:
             st.rerun()
 
 
+# ======================================================================
+# ここまで 15. 選択中の徒歩ルート
+# ======================================================================
+
+# ======================================================================
+# 16. 一覧地図（折りたたみ）
+# ======================================================================
+# display_dfに残っている施設だけをmake_overview_map()へ渡します。
 # 一覧地図は折りたたみ
 with st.expander("🗺️ 施設の地図を見る", expanded=False):
     st.caption(
         "地図は指で移動・拡大できます。縦スクロールは地図の外側を触ってください。"
     )
 
-    # --------------------------------------------------------
-    # 地図に置くマーカー
-    # --------------------------------------------------------
-    # 現在の検索やエリア絞り込みとは別に、
-    # 選択中カテゴリの施設をパーク全体から取得する。
-    #
-    # 例:
-    #   レストラン画面 → パーク内レストラン全部
-    #   ショップ画面     → パーク内ショップ全部
-    #   アトラクション画面 → パーク内アトラクション全部
-    #
-    # display_dfは「最初にどこへ寄せて表示するか」だけに使う。
-    map_marker_df = all_df[
-        all_df["type"].isin(
-            facility_types
-        )
-    ].copy()
-
     folium_static(
         make_overview_map(
-            marker_frame=map_marker_df,
-            location=location,
-            favorites=favorites,
-            focus_frame=display_df,
+            display_df,
+            location,
+            favorites,
         ),
         width=700,
         height=230,
     )
 
 
+# ======================================================================
+# ここまで 16. 一覧地図（折りたたみ）
+# ======================================================================
+
+# ======================================================================
+# 17. 施設カード表示
+# ======================================================================
+# この関数は長いですが「for 1周 = 施設1件」。同じカード処理を件数分繰り返します。
 # タブ
+
+# ------------------------------------------------------------------
+# 関数：show_facility_cards()
+# 役割：施設一覧を1件ずつカード表示
+# 入力：frame / key_prefix
+# 出力：戻り値なし
+# どこで使う：通常一覧・お気に入り一覧
+# 自分で触るなら：カードUIを変える時
+# ------------------------------------------------------------------
 def show_facility_cards(frame, key_prefix):
     """施設カードを表示する。"""
+    # frameの各行を1施設ずつrowへ取り出してカード化します。
     for index, row in frame.iterrows():
         entity_id = str(row["entity_id"])
         favorite = entity_id in favorites
@@ -2855,6 +3443,7 @@ def show_facility_cards(frame, key_prefix):
         if isinstance(official_info, float) and pd.isna(official_info):
             official_info = None
 
+        # ここから「施設1件分」のカード本体。
         with st.container(border=True):
             title_col, star_col = st.columns(
                 [5, 1],
@@ -2976,6 +3565,7 @@ def show_facility_cards(frame, key_prefix):
                         or TYPE_ICONS.get(row["type"], "⭐"),
                     )
 
+            # アトラクションとレストラン/ショップで表示する詳細を分岐します。
             # 施設固有情報
             if row["type"] == "アトラクション":
                 detail_parts = []
@@ -3065,6 +3655,7 @@ def show_facility_cards(frame, key_prefix):
                         "🧊 涼しいスポット候補"
                     )
 
+            # 「今ここ」「行く」で共通利用する施設ID・名前・座標をまとめます。
             spot_payload = {
                 "entity_id": entity_id,
                 "name_ja": row["name_ja"],
@@ -3120,6 +3711,7 @@ def show_facility_cards(frame, key_prefix):
                         use_container_width=True,
                     )
 
+            # お気に入り登録済み施設だけアイコン変更UIを表示します。
             # お気に入りだけアイコン変更
             if favorite and not icon_catalog.empty:
                 with st.popover(
@@ -3179,6 +3771,13 @@ def show_facility_cards(frame, key_prefix):
                         )
 
 
+# ======================================================================
+# ここまで 17. 施設カード表示
+# ======================================================================
+
+# ======================================================================
+# 18. 選択カテゴリに応じてカード / お気に入り / 地図を実際に表示
+# ======================================================================
 if category_page in {
     "🎢 アトラクション",
     "🍽 レストラン",
@@ -3193,6 +3792,7 @@ if category_page in {
         )
 
 
+# 「⭐ 行きたい」はall_dfからお気に入りIDの施設だけ抜き出します。
 if category_page == "⭐ 行きたい":
     favorite_df = all_df[
         all_df["entity_id"]
@@ -3236,6 +3836,7 @@ if category_page == "⭐ 行きたい":
         )
 
 
+# 「🗺 マップ」はカードではなくdisplay_dfを大きめ地図へ渡します。
 if category_page == "🗺 マップ":
     st.markdown("### 🗺 施設マップ")
     st.caption(
@@ -3243,24 +3844,11 @@ if category_page == "🗺 マップ":
         "地図は指で移動・拡大できます。"
     )
 
-    # マップ専用ページでは、
-    # アトラクション・レストラン・ショップを全部表示する。
-    map_all_df = all_df[
-        all_df["type"].isin(
-            [
-                "アトラクション",
-                "レストラン",
-                "ショップ",
-            ]
-        )
-    ].copy()
-
     folium_static(
         make_overview_map(
-            marker_frame=map_all_df,
-            location=location,
-            favorites=favorites,
-            focus_frame=None,
+            display_df,
+            location,
+            favorites,
         ),
         width=700,
         height=430,
@@ -3272,6 +3860,13 @@ if category_page == "🗺 マップ":
             f"次の目的地：{route_map_target['name_ja']}"
         )
 
+# ======================================================================
+# ここまで 18. 選択カテゴリに応じてカード / お気に入り / 地図を実際に表示
+# ======================================================================
+
+# ======================================================================
+# 19. 画面最下部の案内・データ出典
+# ======================================================================
 st.markdown(
     '<div class="bottom-nav-note">下のカテゴリを切り替えて施設を探せます</div>',
     unsafe_allow_html=True,
@@ -3283,3 +3878,7 @@ st.caption(
     "施設・地図・ルート：OpenStreetMap関連サービス。"
     "東京ディズニーリゾート公式アプリではありません。"
 )
+
+# ======================================================================
+# ここまで 19. 画面最下部の案内・データ出典
+# ======================================================================
