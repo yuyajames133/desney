@@ -1,4 +1,4 @@
-# ======================================================================
+======================================================================
 # Magic Park Navi / 学習・編集用 コメント付き版
 # ======================================================================
 # 元コードの動作は変えず、「どこで何をしているか」を追いやすいように
@@ -2551,17 +2551,9 @@ def make_route_map(route, target, location):
         tooltip="徒歩ルート",
     ).add_to(disney_map)
 
-    folium.Marker(
-        [
-            location["latitude"],
-            location["longitude"],
-        ],
-        tooltip="現在地",
-        icon=folium.Icon(
-            color="blue",
-            icon="user",
-        ),
-    ).add_to(disney_map)
+    # 現在地ピンはrender_live_route_map()側で
+    # GPSに合わせてリアルタイム移動させるため、
+    # ここでは静止ピンを置かない。
 
     folium.Marker(
         [target["lat"], target["lon"]],
@@ -2645,18 +2637,9 @@ def make_multi_route_map(legs, ordered_targets, origin):
         scroll_wheel_zoom=False,
     )
 
-    # 出発地点。GPS現在地または「今ここ」で指定した施設。
-    folium.Marker(
-        [
-            origin["latitude"],
-            origin["longitude"],
-        ],
-        tooltip="出発地点",
-        icon=folium.Icon(
-            color="blue",
-            icon="user",
-        ),
-    ).add_to(disney_map)
+    # 青い現在地マーカーはrender_live_route_map()側で
+    # 実GPSに合わせてリアルタイム移動させる。
+    # そのため、ここでは静止した出発地点ピンを置かない。
 
     all_points = []
 
@@ -2714,346 +2697,255 @@ def make_multi_route_map(legs, ordered_targets, origin):
 
 
 
+
 # ------------------------------------------------------------------
-# 関数：render_realtime_gps_map()
-# 役割：Streamlit本体とは独立したLeaflet地図でGPSをリアルタイム追跡
-# 入力：最初のGPS位置 / 1件目的地 / 複数ルート / 追従ON/OFF
-# 出力：components.html()で独立地図を表示
-# どこで使う：14. 現在の状態の直後
+# 関数：render_live_route_map()
+# 役割：
+#   1件ルート地図 / 複数最適ルート地図そのものの中で、
+#   青い現在地マーカーをGPSに合わせてリアルタイム移動させる。
 #
-# 【重要】
-# folium地図のDOMをJavaScriptで直接変更すると、
-# Streamlitの再描画とぶつかって removeChild NotFoundError が出ることがある。
-#
-# この関数ではStreamlit本体のDOMやfolium_static()を一切変更せず、
-# components.html()の専用iframeの中だけでLeaflet地図を動かす。
-# GPS更新でもst.rerun()しないため、歩いても画面全体は再実行されない。
+# 【ポイント】
+# ・別のGPS地図は作らない
+# ・今表示しているルート地図の中で本人の青丸だけ動く
+# ・GPS更新のたびにst.rerun()しない
+# ・ルート線や1 / 2 / 3の目的地ピンはそのまま
 # ------------------------------------------------------------------
-def render_realtime_gps_map(
-        location,
-        route_target=None,
-        optimized_multi_route=None,
-        follow_current=True,
+def render_live_route_map(
+        disney_map,
+        initial_location,
+        height=320,
+        follow_current=False,
 ):
-    """独立Leaflet地図で現在地マーカーだけをリアルタイム更新する。"""
+    """
+    Foliumで作った既存ルート地図をHTMLとして表示し、
+    その地図の中へリアルタイムGPS追跡を追加する。
+    """
 
-    config = {
-        "latitude": float(location["latitude"]),
-        "longitude": float(location["longitude"]),
-        "follow_current": bool(follow_current),
-        "single_target": None,
-        "multi_targets": [],
-        "multi_route_points": [],
-    }
+    # Foliumが内部で作ったLeafletのmap変数名。
+    # 例：map_abc123...
+    map_name = disney_map.get_name()
 
-    if route_target:
-        config["single_target"] = {
-            "name": str(route_target["name_ja"]),
-            "lat": float(route_target["lat"]),
-            "lon": float(route_target["lon"]),
-        }
+    # 最初に表示する青丸の位置。
+    initial_lat = float(initial_location["latitude"])
+    initial_lon = float(initial_location["longitude"])
 
-    if optimized_multi_route:
-        config["multi_targets"] = [
-            {
-                "name": str(target["name_ja"]),
-                "lat": float(target["lat"]),
-                "lon": float(target["lon"]),
-            }
-            for target in optimized_multi_route.get("targets", [])
-        ]
+    follow_js = "true" if follow_current else "false"
 
-        for leg in optimized_multi_route.get("legs", []):
-            route = leg.get("route") or {}
-            points = route.get("points") or []
+    # Folium地図本体のHTMLを作る。
+    map_html = disney_map.get_root().render()
 
-            if points:
-                config["multi_route_points"].append(
-                    [
-                        [float(point[0]), float(point[1])]
-                        for point in points
-                    ]
-                )
-
-    config_json = json.dumps(
-        config,
-        ensure_ascii=False,
-    )
-
-    live_html = r"""
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-/>
-
-<style>
-html, body {
-    margin: 0;
-    padding: 0;
-    width: 100%;
-    height: 100%;
-    background: transparent;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}
-
-#map {
-    width: 100%;
-    height: 390px;
-    border-radius: 16px;
-    overflow: hidden;
-}
-
-#gps-status {
-    position: absolute;
-    z-index: 1000;
-    top: 10px;
-    left: 50px;
-    right: 10px;
-    background: rgba(255,255,255,.94);
-    color: #12304f;
-    border-radius: 12px;
-    padding: 8px 10px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.22);
-    font-size: 13px;
-    font-weight: 700;
-    pointer-events: none;
-}
-
-.current-dot {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #1976d2;
-    border: 4px solid white;
-    box-shadow:
-        0 0 0 3px rgba(25,118,210,.28),
-        0 2px 6px rgba(0,0,0,.4);
-}
-
-.route-number {
-    width: 30px;
-    height: 30px;
-    border-radius: 50%;
-    background: white;
-    border: 4px solid #2563eb;
-    box-shadow: 0 2px 6px rgba(0,0,0,.35);
-    color: #12304f;
-    font-size: 15px;
-    font-weight: 900;
-    line-height: 22px;
-    text-align: center;
-}
-</style>
-</head>
-
-<body>
-<div id="map"></div>
-<div id="gps-status">📡 リアルタイムGPSを開始しています…</div>
-
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
+    # ----------------------------------------------------------
+    # 同じLeaflet地図の中で現在地だけ更新するJavaScript
+    # ----------------------------------------------------------
+    live_script = f"""
 <script>
-const config = __CONFIG__;
+(function() {{
+    const map = {map_name};
 
-const map = L.map("map", {
-    zoomControl: true,
-    attributionControl: true
-}).setView(
-    [config.latitude, config.longitude],
-    18
-);
-
-L.tileLayer(
-    "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-    {
-        maxZoom: 20,
-        attribution: "&copy; OpenStreetMap contributors"
-    }
-).addTo(map);
-
-const currentIcon = L.divIcon({
-    className: "",
-    html: '<div class="current-dot"></div>',
-    iconSize: [26, 26],
-    iconAnchor: [13, 13]
-});
-
-const currentMarker = L.marker(
-    [config.latitude, config.longitude],
-    {
-        icon: currentIcon,
-        zIndexOffset: 2000
-    }
-).addTo(map);
-
-currentMarker.bindTooltip("現在地");
-
-const accuracyCircle = L.circle(
-    [config.latitude, config.longitude],
-    {
-        radius: 0,
-        weight: 1,
-        opacity: 0.35,
-        fillOpacity: 0.08
-    }
-).addTo(map);
-
-if (config.single_target) {
-    L.marker(
-        [
-            config.single_target.lat,
-            config.single_target.lon
-        ]
-    )
-    .addTo(map)
-    .bindTooltip(
-        "目的地：" + config.single_target.name
-    );
-}
-
-config.multi_targets.forEach((target, index) => {
-    const number = index + 1;
-
-    const numberIcon = L.divIcon({
+    // ------------------------------------------------------
+    // 青い現在地マーカー
+    // ------------------------------------------------------
+    const currentIcon = L.divIcon({{
         className: "",
-        html:
-            '<div class="route-number">' +
-            number +
-            '</div>',
-        iconSize: [38, 38],
-        iconAnchor: [19, 19]
-    });
+        html: `
+            <div style="
+                width:20px;
+                height:20px;
+                border-radius:50%;
+                background:#1976d2;
+                border:4px solid white;
+                box-shadow:
+                    0 0 0 4px rgba(25,118,210,.25),
+                    0 2px 8px rgba(0,0,0,.40);
+            "></div>
+        `,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
+    }});
 
-    L.marker(
-        [target.lat, target.lon],
-        {
-            icon: numberIcon,
-            zIndexOffset: 1000
-        }
-    )
-    .addTo(map)
-    .bindTooltip(
-        number + ". " + target.name
-    );
-});
-
-config.multi_route_points.forEach(points => {
-    L.polyline(
-        points,
-        {
-            weight: 6,
-            opacity: 0.85
-        }
+    const currentMarker = L.marker(
+        [{initial_lat}, {initial_lon}],
+        {{
+            icon: currentIcon,
+            zIndexOffset: 5000
+        }}
     ).addTo(map);
-});
 
-const statusBox = document.getElementById("gps-status");
-let watchId = null;
-let firstLivePosition = true;
+    currentMarker.bindTooltip("現在地");
 
-function updatePosition(position) {
-    const lat = position.coords.latitude;
-    const lon = position.coords.longitude;
-    const accuracy = position.coords.accuracy || 0;
+    // GPS精度の目安を薄い円で表示。
+    const accuracyCircle = L.circle(
+        [{initial_lat}, {initial_lon}],
+        {{
+            radius: 0,
+            color: "#1976d2",
+            weight: 1,
+            opacity: 0.35,
+            fillColor: "#60a5fa",
+            fillOpacity: 0.08
+        }}
+    ).addTo(map);
 
-    currentMarker.setLatLng([lat, lon]);
+    // ------------------------------------------------------
+    // 地図上部のGPS状態表示
+    // ------------------------------------------------------
+    const LiveGpsControl = L.Control.extend({{
+        options: {{
+            position: "topleft"
+        }},
 
-    accuracyCircle.setLatLng([lat, lon]);
-    accuracyCircle.setRadius(accuracy);
+        onAdd: function() {{
+            const box = L.DomUtil.create(
+                "div",
+                "live-gps-status"
+            );
 
-    statusBox.textContent =
-        "📡 現在地を追跡中　精度：約" +
-        Math.round(accuracy) +
-        "m";
+            box.style.background = "rgba(255,255,255,.94)";
+            box.style.padding = "8px 12px";
+            box.style.borderRadius = "12px";
+            box.style.boxShadow = "0 2px 8px rgba(0,0,0,.22)";
+            box.style.fontWeight = "800";
+            box.style.fontSize = "13px";
+            box.style.color = "#12304f";
+            box.style.marginLeft = "42px";
+            box.style.whiteSpace = "nowrap";
 
-    if (firstLivePosition || config.follow_current) {
-        map.panTo(
-            [lat, lon],
-            {
-                animate: true,
-                duration: 0.4
-            }
+            box.innerHTML = "🛰 現在地を取得中…";
+
+            // この表示を触った時に地図操作へ伝播させない。
+            L.DomEvent.disableClickPropagation(box);
+            L.DomEvent.disableScrollPropagation(box);
+
+            this._box = box;
+            return box;
+        }}
+    }});
+
+    const liveGpsControl = new LiveGpsControl();
+    liveGpsControl.addTo(map);
+
+    // ------------------------------------------------------
+    // GPSの位置が更新された時
+    // ------------------------------------------------------
+    let firstLivePosition = true;
+
+    function updateLivePosition(position) {{
+        const lat = position.coords.latitude;
+        const lon = position.coords.longitude;
+        const accuracy = position.coords.accuracy || 0;
+        const latlng = [lat, lon];
+
+        // ここがリアルタイムで動く部分。
+        currentMarker.setLatLng(latlng);
+
+        accuracyCircle.setLatLng(latlng);
+        accuracyCircle.setRadius(accuracy);
+
+        if (liveGpsControl._box) {{
+            liveGpsControl._box.innerHTML =
+                "🛰 現在地を追跡中　精度：約" +
+                Math.round(accuracy) +
+                "m";
+        }}
+
+        // 最初の1回だけ現在地を画面内へ寄せる。
+        // follow_current=Trueなら、その後も現在地についていく。
+        if (firstLivePosition) {{
+            if (!map.getBounds().contains(latlng)) {{
+                map.panTo(latlng, {{
+                    animate: true
+                }});
+            }}
+            firstLivePosition = false;
+        }} else if ({follow_js}) {{
+            map.panTo(latlng, {{
+                animate: true
+            }});
+        }}
+    }}
+
+    function gpsError(error) {{
+        let message = "現在地を取得できません";
+
+        if (error && error.code === 1) {{
+            message = "位置情報が許可されていません";
+        }} else if (error && error.code === 2) {{
+            message = "現在地を特定できません";
+        }} else if (error && error.code === 3) {{
+            message = "GPS取得がタイムアウトしました";
+        }}
+
+        if (liveGpsControl._box) {{
+            liveGpsControl._box.innerHTML =
+                "⚠️ " + message;
+        }}
+    }}
+
+    // ------------------------------------------------------
+    // Streamlitのiframeでも動くように、
+    // 親ページのGeolocation APIを優先して利用する。
+    // ------------------------------------------------------
+    const geo =
+        window.parent &&
+        window.parent.navigator &&
+        window.parent.navigator.geolocation
+            ? window.parent.navigator.geolocation
+            : navigator.geolocation;
+
+    let watchId = null;
+
+    if (geo) {{
+        watchId = geo.watchPosition(
+            updateLivePosition,
+            gpsError,
+            {{
+                enableHighAccuracy: true,
+                maximumAge: 1000,
+                timeout: 15000
+            }}
         );
-    }
+    }} else {{
+        if (liveGpsControl._box) {{
+            liveGpsControl._box.innerHTML =
+                "⚠️ このブラウザはGPSに対応していません";
+        }}
+    }}
 
-    firstLivePosition = false;
-}
+    // 地図iframeが閉じられたらGPS監視も止める。
+    function cleanupGpsWatch() {{
+        if (geo && watchId !== null) {{
+            geo.clearWatch(watchId);
+            watchId = null;
+        }}
+    }}
 
-function gpsError(error) {
-    let message = "位置情報を取得できませんでした。";
-
-    if (error && error.code === 1) {
-        message = "位置情報の利用が許可されていません。";
-    } else if (error && error.code === 2) {
-        message = "現在地を特定できませんでした。";
-    } else if (error && error.code === 3) {
-        message = "現在地取得がタイムアウトしました。";
-    }
-
-    statusBox.textContent = "⚠️ " + message;
-}
-
-const geo =
-    window.parent &&
-    window.parent.navigator &&
-    window.parent.navigator.geolocation
-        ? window.parent.navigator.geolocation
-        : navigator.geolocation;
-
-if (geo) {
-    watchId = geo.watchPosition(
-        updatePosition,
-        gpsError,
-        {
-            enableHighAccuracy: true,
-            maximumAge: 1000,
-            timeout: 15000
-        }
+    window.addEventListener(
+        "pagehide",
+        cleanupGpsWatch
     );
-} else {
-    statusBox.textContent =
-        "⚠️ このブラウザは位置情報に対応していません。";
-}
 
-function cleanupGpsWatch() {
-    if (geo && watchId !== null) {
-        geo.clearWatch(watchId);
-        watchId = null;
-    }
-}
+    window.addEventListener(
+        "beforeunload",
+        cleanupGpsWatch
+    );
 
-window.addEventListener(
-    "pagehide",
-    cleanupGpsWatch
-);
-
-window.addEventListener(
-    "beforeunload",
-    cleanupGpsWatch
-);
-
-setTimeout(() => {
-    map.invalidateSize();
-}, 200);
+    setTimeout(function() {{
+        map.invalidateSize();
+    }}, 200);
+}})();
 </script>
-</body>
-</html>
 """
 
-    live_html = live_html.replace(
-        "__CONFIG__",
-        config_json,
+    # Folium HTMLの最後へ追加。
+    # これで「別地図」ではなく、このFolium地図自身がGPS追跡する。
+    map_html = map_html.replace(
+        "</body>",
+        live_script + "\n</body>",
     )
 
     components.html(
-        live_html,
-        height=410,
+        map_html,
+        height=height,
         scrolling=False,
     )
 
@@ -3232,31 +3124,6 @@ if location is None:
     )
     st.stop()
 
-
-# ----------------------------------------------------------
-# リアルタイムGPS地図
-# ----------------------------------------------------------
-# GPS更新のたびにStreamlitをrerunせず、
-# 専用Leaflet地図の青い現在地マーカーだけを動かす。
-realtime_gps_map = st.toggle(
-    "🛰 リアルタイム現在地マップ",
-    value=False,
-    key=f"realtime_gps_map_{park_name}",
-)
-
-if realtime_gps_map:
-    follow_realtime_gps = st.toggle(
-        "🎯 地図も現在地に追従",
-        value=True,
-        key=f"follow_realtime_gps_{park_name}",
-    )
-
-    st.caption(
-        "歩くと青い現在地マーカーが自動で動きます。"
-        "GPS更新では画面全体を再読み込みしません。"
-    )
-else:
-    follow_realtime_gps = True
 
 # ======================================================================
 # ここまで 9. ここから実際の画面処理（アプリ本体）
@@ -3876,23 +3743,6 @@ st.markdown(
 )
 
 
-# ----------------------------------------------------------
-# 独立リアルタイムGPS地図を表示
-# ----------------------------------------------------------
-# 1件ルートの目的地があれば目的地ピンも表示。
-# 複数最適ルートを作成済みなら、その順番と経路線も表示。
-if realtime_gps_map:
-    st.markdown("### 🛰 リアルタイム現在地")
-
-    render_realtime_gps_map(
-        location=location,
-        route_target=route_target,
-        optimized_multi_route=st.session_state.get(
-            "optimized_multi_route"
-        ),
-        follow_current=follow_realtime_gps,
-    )
-
 # ======================================================================
 # ここまで 14. 現在の状態（GPS / 今いる施設 / 次の目的地）
 # ======================================================================
@@ -4063,14 +3913,22 @@ if route_targets:
                 f"{math.ceil(optimized_multi_route['time_seconds'] / 60)}分",
             )
 
-        folium_static(
-            make_multi_route_map(
-                optimized_multi_route["legs"],
-                optimized_multi_route["targets"],
-                optimized_multi_route["origin"],
-            ),
-            width=700,
-            height=360,
+        # --------------------------------------------------
+        # 複数最適ルートの「この地図そのもの」の中で
+        # 青い現在地マーカーをリアルタイム移動させる。
+        # 別のGPS地図は表示しない。
+        # --------------------------------------------------
+        multi_route_map = make_multi_route_map(
+            optimized_multi_route["legs"],
+            optimized_multi_route["targets"],
+            optimized_multi_route["origin"],
+        )
+
+        render_live_route_map(
+            multi_route_map,
+            initial_location=location,
+            height=380,
+            follow_current=False,
         )
 
         st.caption(
@@ -4164,14 +4022,21 @@ if route_target:
                     ),
                 )
 
-            folium_static(
-                make_route_map(
-                    route,
-                    route_target,
-                    route_origin,
-                ),
-                width=700,
-                height=280,
+            # --------------------------------------------------
+            # 選択したアトラクションへの「このルート地図」の中で
+            # 青い現在地マーカーをリアルタイム移動させる。
+            # --------------------------------------------------
+            single_route_map = make_route_map(
+                route,
+                route_target,
+                route_origin,
+            )
+
+            render_live_route_map(
+                single_route_map,
+                initial_location=location,
+                height=310,
+                follow_current=False,
             )
 
             st.caption(
