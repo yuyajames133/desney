@@ -3488,16 +3488,16 @@ if (
     # 確認用
     # お気に入りとして何が取れているか一時表示
     # ----------------------------------------------------------
-    st.write(
-        "favoritesの中身",
-        favorites
-    )
-    st.write(
-        "お気に入り地図用",
-        park_favorite_df[
-            ["name_ja", "type", "area", "entity_id"]
-        ]
-    )
+    # st.write(
+    #     "favoritesの中身",
+    #     favorites
+    # )
+    # st.write(
+    #     "お気に入り地図用",
+    #     park_favorite_df[
+    #         ["name_ja", "type", "area", "entity_id"]
+    #     ]
+    # )
 
     # ----------------------------------------------------------
     # 地図を表示
