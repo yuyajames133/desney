@@ -2440,7 +2440,8 @@ def make_overview_map(frame, location, favorites, favorite_frame=None):
                 .tolist()
             )
 
-            for _, row in favorite_frame.iterrows():
+            # パーク内のお気に入りを1件ずつ確認
+            for _, favorite_row in favorite_frame.iterrows():
 
                 entity_id = str(
                     row["entity_id"]
@@ -2453,11 +2454,11 @@ def make_overview_map(frame, location, favorites, favorite_frame=None):
                 # お気に入り施設を地図へ追加
                 add_facility_marker(
                     disney_map,
-                    row,
+                    favorite_row,
                     favorites,
                 )
 
-        return disney_map
+    return disney_map
 
 
 # ------------------------------------------------------------------
