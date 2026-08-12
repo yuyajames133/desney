@@ -2296,7 +2296,7 @@ AREA_COLORS = {
 def add_facility_marker(disney_map, row, favorites):
     area_name = str(row.get("area") or "")
     area_color = AREA_COLORS.get(area_name, "#F4B400")
-    """施設マーカーを追加する。"""
+    # """施設マーカーを追加する。"""
     entity_id = str(row["entity_id"])
     is_favorite = entity_id in favorites
     type_icon = TYPE_ICONS.get(row["type"], "📍")
