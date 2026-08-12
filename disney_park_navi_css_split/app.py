@@ -2378,7 +2378,13 @@ def add_facility_marker(disney_map, row, favorites):
 # どこで使う：一覧地図/マップタブ
 # 自分で触るなら：地図全体を変える時
 # ------------------------------------------------------------------
-def make_overview_map(frame, location, favorites, favorite_frame=None):
+def make_overview_map(
+        frame,
+        location,
+        favorites,
+        favorite_frame=None,
+        center_on_current=False,
+        ):
     """一覧確認用の小さい地図。"""
 
     # ----------------------------------------------------------
@@ -2390,30 +2396,31 @@ def make_overview_map(frame, location, favorites, favorite_frame=None):
     map_lat = location["latitude"]
     map_lon = location["longitude"]
 
-
     # ----------------------------------------------------------
-    # 表示する施設がある場合
+    # 地図の中心を決める
     # ----------------------------------------------------------
-    # frameには現在画面に表示する施設が入っている。
-    #
-    # 例：
-    # ワールドバザールを選択
-    # ↓
-    # frameにはワールドバザールの施設だけが入る
-    #
-    # その施設の緯度・経度の平均を
-    # 地図の中心にする。
 
-    if not frame.empty:
-        # 施設の緯度の平均
+    # 現在地周辺モードなら
+    # 施設の位置ではなくGPS現在地を中心にする
+    if center_on_current:
+
+        map_lat = location["latitude"]
+        map_lon = location["longitude"]
+
+
+    # 通常のエリア地図なら
+    # 表示している施設の真ん中を中心にする
+    elif not frame.empty:
+
         map_lat = frame["lat"].mean()
-        # 施設の軽度の平均
         map_lon = frame["lon"].mean()
+
+
+    # 施設がなければGPS現在地
     else:
-        #施設が一件もない場合は
-        #現在地を地図の中心にする
-        map_lat = location["latitude"],
-        map_lon = location["longitude"],
+
+        map_lat = location["latitude"]
+        map_lon = location["longitude"]
 
  # ----------------------------------------------------------
  # 地図を作る
@@ -2679,6 +2686,28 @@ sort_mode = st.selectbox(
         "距離＋待ち時間のバランス順",
     ],
 )
+# ----------------------------------------------------------
+# 現在地周辺のアトラクションを地図に表示する設定
+# ----------------------------------------------------------
+
+nearby_mode = st.checkbox(
+    "📍 現在地周辺のアトラクションを見る",
+    value=False,
+    key=f"nearby_mode_{park_name}",
+)
+
+# 現在地周辺モードをONにした時だけ
+# 何m以内を表示するか選べるようにする
+if nearby_mode:
+    nearby_radius = st.selectbox(
+        "現在地からの範囲",
+        [100, 200, 300, 500, 1000],
+        index=2,  # 最初は300m
+        format_func=lambda value: f"{value}m以内",
+        key=f"nearby_radius_{park_name}",
+    )
+else:
+    nearby_radius = 300
 
 search_word = ""
 
@@ -3447,22 +3476,69 @@ if route_target:
 # ======================================================================
 # 16. 一覧地図（折りたたみ）
 # ======================================================================
-# display_dfには、
-# すでに検索・エリア選択などで絞り込まれた施設だけが入っている。
+# ----------------------------------------------------------
+# 現在地周辺モード
+# ----------------------------------------------------------
+if nearby_mode:
+
+    # all_dfには現在選択中のパークの
+    # アトラクション・レストラン・ショップが全部入っている。
+    #
+    # その中から
+    # ① アトラクション
+    # ② GPS現在地から指定距離以内
+    # のものだけ取り出す。
+    nearby_attractions_df = all_df[
+        (all_df["type"] == "アトラクション")
+        & (all_df["distance_m"] <= nearby_radius)
+    ].copy()
+
+    # 距離が近い順に並べる
+    nearby_attractions_df = nearby_attractions_df.sort_values(
+        "distance_m"
+    )
+
+    st.markdown(
+        f"### 📍 現在地から{nearby_radius}m以内"
+    )
+
+    if nearby_attractions_df.empty:
+
+        st.info(
+            f"現在地から{nearby_radius}m以内に"
+            "アトラクションはありません。"
+        )
+
+    else:
+
+        st.caption(
+            f"近くのアトラクション "
+            f"{len(nearby_attractions_df)}件"
+        )
+
+        # GPS現在地を中心に地図を表示
+        folium_static(
+            make_overview_map(
+                nearby_attractions_df,
+                location,
+                favorites,
+                center_on_current=True,
+            ),
+            width=700,
+            height=300,
+        )
+
 
 # ----------------------------------------------------------
-# エリアが選ばれている場合
+# 通常のエリア地図
 # ----------------------------------------------------------
-# 「すべて」ではなく、
-# 例えば「ファンタジーランド」を選択した場合は、
-# 折りたたまずに地図をそのまま表示する。
-if (
-        category_page in {
-            "🎢 アトラクション",
-            "🍽 レストラン",
-            "🛍 ショップ",
-        }
-        and selected_area != "すべて"
+elif (
+    category_page in {
+        "🎢 アトラクション",
+        "🍽 レストラン",
+        "🛍 ショップ",
+    }
+    and selected_area != "すべて"
 ):
     # 今選択しているエリア名を地図の上に表示
     st.markdown(f"### 🗺️ {selected_area}の地図")
