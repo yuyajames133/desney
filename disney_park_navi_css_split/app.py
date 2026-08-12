@@ -73,6 +73,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # 複数の目的地を「どの順番で回ると短いか」比較するために使う。
 # 例：A→B→C / A→C→B ... のような全パターンを作る。
 from itertools import permutations
+from branca.element import MacroElement, Template
 
 # 外部ライブラリ：地図、表データ、HTTP通信、Streamlit画面など
 import folium
@@ -2399,6 +2400,84 @@ def add_facility_marker(disney_map, row, favorites):
 
 
 # ------------------------------------------------------------------
+# 関数：add_live_gps_tracking()
+# 役割：地図上の現在地マーカーをスマホGPSに合わせてリアルタイム移動
+# 入力：map / current_marker / follow_gps
+# 出力：戻り値なし
+# どこで使う：一覧地図 / 1件ルート / 複数ルート
+# ------------------------------------------------------------------
+def add_live_gps_tracking(disney_map, current_marker, follow_gps=False):
+    """ブラウザのwatchPosition()で現在地マーカーだけをリアルタイム更新する。"""
+
+    map_name = disney_map.get_name()
+    marker_name = current_marker.get_name()
+    follow_js = "true" if follow_gps else "false"
+
+    # MacroElementとして地図の最後に追加する。
+    # こうするとLeafletのmap/marker変数が作られた後にJavaScriptが動く。
+    live_element = MacroElement()
+    live_element._name = "LiveGpsTracking"
+    live_element._template = Template(
+        f"""
+        {{% macro script(this, kwargs) %}}
+        (function() {{
+            if (!navigator.geolocation) {{
+                console.warn('このブラウザでは位置情報を利用できません。');
+                return;
+            }}
+
+            const map = {map_name};
+            const currentMarker = {marker_name};
+
+            const accuracyCircle = L.circle(currentMarker.getLatLng(), {{
+                radius: 0,
+                color: '#2563eb',
+                weight: 1,
+                fillColor: '#60a5fa',
+                fillOpacity: 0.12,
+                interactive: false
+            }}).addTo(map);
+
+            const watchId = navigator.geolocation.watchPosition(
+                function(position) {{
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const accuracy = position.coords.accuracy || 0;
+                    const nextLatLng = [lat, lon];
+
+                    currentMarker.setLatLng(nextLatLng);
+                    accuracyCircle.setLatLng(nextLatLng);
+                    accuracyCircle.setRadius(accuracy);
+
+                    if ({follow_js}) {{
+                        map.panTo(nextLatLng, {{
+                            animate: true,
+                            duration: 0.5
+                        }});
+                    }}
+                }},
+                function(error) {{
+                    console.warn('リアルタイムGPS取得エラー:', error);
+                }},
+                {{
+                    enableHighAccuracy: true,
+                    maximumAge: 1000,
+                    timeout: 10000
+                }}
+            );
+
+            window.addEventListener('beforeunload', function() {{
+                navigator.geolocation.clearWatch(watchId);
+            }});
+        }})();
+        {{% endmacro %}}
+        """
+    )
+
+    disney_map.add_child(live_element)
+
+
+# ------------------------------------------------------------------
 # 関数：make_overview_map()
 # 役割：一覧用地図を作る
 # 入力：frame / location / favorites
@@ -2412,6 +2491,8 @@ def make_overview_map(
         favorites,
         favorite_frame=None,
         center_on_current=False,
+        live_gps=False,
+        follow_gps=False,
         ):
     """一覧確認用の小さい地図。"""
 
@@ -2466,7 +2547,7 @@ def make_overview_map(
     # ----------------------------------------------------------
     # GPS現在地
     # ----------------------------------------------------------
-    folium.Marker(
+    current_marker = folium.Marker(
         [
             location["latitude"],
             location["longitude"],
@@ -2477,6 +2558,14 @@ def make_overview_map(
             icon="user",
         ),
     ).add_to(disney_map)
+
+    if live_gps:
+        add_live_gps_tracking(
+            disney_map,
+            current_marker,
+            follow_gps=follow_gps,
+        )
+
     # ----------------------------------------------------------
     # 今選択しているエリアの施設
     # ----------------------------------------------------------
@@ -2531,7 +2620,7 @@ def make_overview_map(
 # どこで使う：ルート表示
 # 自分で触るなら：線/ピンを変える時
 # ------------------------------------------------------------------
-def make_route_map(route, target, location):
+def make_route_map(route, target, location, live_gps=False, follow_gps=False):
     """選択施設までの徒歩ルート専用地図。"""
     disney_map = folium.Map(
         location=[
@@ -2551,7 +2640,7 @@ def make_route_map(route, target, location):
         tooltip="徒歩ルート",
     ).add_to(disney_map)
 
-    folium.Marker(
+    current_marker = folium.Marker(
         [
             location["latitude"],
             location["longitude"],
@@ -2562,6 +2651,13 @@ def make_route_map(route, target, location):
             icon="user",
         ),
     ).add_to(disney_map)
+
+    if live_gps:
+        add_live_gps_tracking(
+            disney_map,
+            current_marker,
+            follow_gps=follow_gps,
+        )
 
     folium.Marker(
         [target["lat"], target["lon"]],
@@ -2634,7 +2730,7 @@ def find_best_visit_order(origin, targets):
 # 出力：folium.Map
 # どこで使う：15番の複数ルート表示
 # ------------------------------------------------------------------
-def make_multi_route_map(legs, ordered_targets, origin):
+def make_multi_route_map(legs, ordered_targets, origin, live_gps=False, follow_gps=False):
     disney_map = folium.Map(
         location=[
             origin["latitude"],
@@ -2646,17 +2742,24 @@ def make_multi_route_map(legs, ordered_targets, origin):
     )
 
     # 出発地点。GPS現在地または「今ここ」で指定した施設。
-    folium.Marker(
+    current_marker = folium.Marker(
         [
             origin["latitude"],
             origin["longitude"],
         ],
-        tooltip="出発地点",
+        tooltip="現在地",
         icon=folium.Icon(
             color="blue",
             icon="user",
         ),
     ).add_to(disney_map)
+
+    if live_gps:
+        add_live_gps_tracking(
+            disney_map,
+            current_marker,
+            follow_gps=follow_gps,
+        )
 
     all_points = []
 
@@ -2886,6 +2989,32 @@ if location is None:
         "ブラウザの位置情報を許可してください。"
     )
     st.stop()
+
+# ----------------------------------------------------------
+# リアルタイムGPS設定
+# ----------------------------------------------------------
+live_col1, live_col2 = st.columns(2)
+
+with live_col1:
+    live_gps = st.toggle(
+        "📡 リアルタイム現在地",
+        value=True,
+        key=f"live_gps_{park_name}",
+    )
+
+with live_col2:
+    follow_gps = st.toggle(
+        "🎯 現在地を追従",
+        value=False,
+        disabled=not live_gps,
+        key=f"follow_gps_{park_name}",
+    )
+
+if live_gps:
+    st.caption(
+        "地図上の青い現在地マーカーは歩くと自動で移動します。"
+        "「現在地を追従」をONにすると、地図も現在地に付いてきます。"
+    )
 
 # ======================================================================
 # ここまで 9. ここから実際の画面処理（アプリ本体）
@@ -3679,6 +3808,8 @@ if route_targets:
                 optimized_multi_route["legs"],
                 optimized_multi_route["targets"],
                 optimized_multi_route["origin"],
+                live_gps=live_gps,
+                follow_gps=follow_gps,
             ),
             width=700,
             height=360,
@@ -3780,6 +3911,8 @@ if route_target:
                     route,
                     route_target,
                     route_origin,
+                    live_gps=live_gps,
+                    follow_gps=follow_gps,
                 ),
                 width=700,
                 height=280,
@@ -3877,6 +4010,8 @@ if nearby_mode:
                 location,
                 favorites,
                 center_on_current=True,
+                live_gps=live_gps,
+                follow_gps=follow_gps,
             ),
             width=700,
             height=300,
@@ -3938,6 +4073,8 @@ elif (
             location,
             favorites,
             park_favorite_df,
+            live_gps=live_gps,
+            follow_gps=follow_gps,
         ),
         width=700,
         height=230,
@@ -3949,8 +4086,17 @@ else:
     # 全施設の場合は地図が大きくなるので、
     # 今まで通り折りたたみ式にする。
     with st.expander("🗺️ 施設の地図を見る", expanded=False, ):
-        folium_static(make_overview_map(display_df, location, favorites, ),
-                      width=700, height=230, )
+        folium_static(
+            make_overview_map(
+                display_df,
+                location,
+                favorites,
+                live_gps=live_gps,
+                follow_gps=follow_gps,
+            ),
+            width=700,
+            height=230,
+        )
 
 
 # ======================================================================
@@ -4447,6 +4593,8 @@ if category_page == "🗺 マップ":
             display_df,
             location,
             favorites,
+            live_gps=live_gps,
+            follow_gps=follow_gps,
         ),
         width=700,
         height=430,
