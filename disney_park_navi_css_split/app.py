@@ -2430,7 +2430,7 @@ def make_overview_map(frame, location, favorites, favorite_frame=None):
         # ----------------------------------------------------------
         # favorite_frameには、
         # 今選択しているランドまたはシーのお気に入り全部を入れる。
-        if favorite_frame is not None and not favorite_frame.empty:
+    if favorite_frame is not None and not favorite_frame.empty:
 
             # すでにエリア施設として地図へ追加した施設ID
             # 同じ施設を2重に出さないために使う。
