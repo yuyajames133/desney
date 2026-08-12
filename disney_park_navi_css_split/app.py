@@ -2444,7 +2444,7 @@ def make_overview_map(frame, location, favorites, favorite_frame=None):
             for _, favorite_row in favorite_frame.iterrows():
 
                 entity_id = str(
-                    row["entity_id"]
+                    favorite_row["entity_id"]
                 )
 
                 # エリア側ですでに表示済みなら追加しない
