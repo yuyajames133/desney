@@ -2350,24 +2350,25 @@ def add_facility_marker(disney_map, row, favorites):
             icon_anchor=(17, 17),
         )
     else:
-        color = {
-            "アトラクション": "red",
-            "レストラン": "green",
-            "ショップ": "purple",
-            "ランドマーク": "cadetblue",
-        }.get(row["type"], "gray")
-
-        marker_icon = folium.Icon(
-            color=color,
-            icon="info-sign",
+        marker_icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width:28px;
+                height:28px;
+                border-radius:50%;
+                background:{area_color};
+                border:3px solid white;
+                box-shadow:0 2px 5px rgba(0,0,0,.35);
+                color:white;
+                font-size:16px;
+                font-weight:bold;
+                line-height:24px;
+                text-align:center;
+            ">i</div>
+            """,
+            icon_size=(28, 28),
+            icon_anchor=(14, 14),
         )
-
-    folium.Marker(
-        [row["lat"], row["lon"]],
-        tooltip=f"{marker_text} {display_name}",
-        popup=folium.Popup(popup, max_width=300),
-        icon=marker_icon,
-    ).add_to(disney_map)
 
 
 # ------------------------------------------------------------------
